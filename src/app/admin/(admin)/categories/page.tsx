@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { categoriesData } from "../../../../public/categoriesData";
+import { categoriesData } from "../../../../../public/categoriesData";
 import {
   Table,
   TableBody,
@@ -24,13 +24,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { IconEdit, IconTrash, IconPlus, IconX } from "@tabler/icons-react";
 
 interface CategoryField {
@@ -115,7 +108,7 @@ export default function CategoriesPage() {
         setCategories([...categories, categoryToSave]);
       }
       setIsDialogOpen(false);
-    } catch (e) {
+    } catch {
       alert("Error saving category");
     }
   };
@@ -180,9 +173,6 @@ export default function CategoriesPage() {
   };
 
   const generatePricingTemplate = () => {
-    const fields = currentCategory.fields || [];
-    const selectFields = fields.filter((f) => f.type === "select");
-
     // Initialize nested prices structure if needed, or just reset to empty
     // For N-dimensions, we just need to ensure the object structure exists
     // But since we are building it dynamically in the UI, we might not need to pre-populate everything
@@ -208,7 +198,7 @@ export default function CategoriesPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>ID</TableHead>
+              <TableHead>Image</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Description</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -217,7 +207,16 @@ export default function CategoriesPage() {
           <TableBody>
             {categories.map((category) => (
               <TableRow key={category.id}>
-                <TableCell className="font-medium">{category.id}</TableCell>
+                <TableCell>
+                  <div className="relative w-12 h-12 rounded-md overflow-hidden border">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={category.image}
+                      alt={category.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                </TableCell>
                 <TableCell>{category.name}</TableCell>
                 <TableCell className="max-w-md truncate">
                   {category.description}
@@ -252,7 +251,7 @@ export default function CategoriesPage() {
               {isEditing ? "Edit Category" : "Add Category"}
             </DialogTitle>
             <DialogDescription>
-              Make changes to the category details here. Click save when you're
+              Make changes to the category details here. Click save when you&apos;re
               done.
             </DialogDescription>
           </DialogHeader>
@@ -313,6 +312,7 @@ export default function CategoriesPage() {
                   <div className="flex flex-col gap-3">
                     {currentCategory.image && (
                       <div className="relative w-24 h-24 rounded-md overflow-hidden border">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={currentCategory.image}
                           alt="Preview"
@@ -519,7 +519,7 @@ export default function CategoriesPage() {
                 if (selectFields.length === 0) {
                   return (
                     <p className="text-sm text-muted-foreground border p-4 rounded-md">
-                      Add "select" fields in the Input Fields section to
+                      Add &quot;select&quot; fields in the Input Fields section to
                       configure pricing tables.
                     </p>
                   );

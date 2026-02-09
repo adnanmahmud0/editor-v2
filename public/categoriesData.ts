@@ -11,7 +11,7 @@ export const categoriesData = [
             title: "A5 Finished Size",
             details: "148mm wide x 210mm high (A4 folded in half) Printed on 150gsm paper"
         },
-        image: "/home/Order-of-Ceremony.jpg",
+        image: "https://placehold.co/600x400/png?text=A5+Booklets",
         imageAlt: "A5 funeral memorial booklets displayed together",
         url: "/products/a5-booklets",
         fields: [
@@ -136,7 +136,7 @@ export const categoriesData = [
             title: "Standard Size",
             details: "55mm wide x 200mm high. Laminated."
         },
-        image: "/home/Bookmarks.jpg",
+        image: "https://placehold.co/600x400/png?text=Bookmarks",
         imageAlt: "Printed memorial bookmarks",
         url: "/products/bookmarks",
         fields: [
