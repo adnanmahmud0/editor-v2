@@ -1,4 +1,4 @@
-import { File, Edit, Type, ChevronDown, Menu } from "lucide-react";
+import { File, Edit, Type, ChevronDown } from "lucide-react";
 
 export function TopMenuBar() {
   const menuItems = [

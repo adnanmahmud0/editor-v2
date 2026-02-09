@@ -8,7 +8,7 @@ import { TopMenuBar } from "@/components/admin-editor/TopMenuBar";
 import { useState } from "react";
 import * as fabric from "fabric";
 
-export default function page() {
+export default function Page() {
   const [activeCanvas, setActiveCanvas] = useState<fabric.Canvas | null>(null);
 
   return (
