@@ -96,7 +96,8 @@ export function InvitationEditor() {
     canvas.renderAll();
     
     // 2. Capture the new canvas state as JSON
-    const newCanvasJson = canvas.toJSON(['id']);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newCanvasJson = (canvas as any).toJSON(['id']);
 
     // 3. Update React state for pages
     setPages(prevPages => {
