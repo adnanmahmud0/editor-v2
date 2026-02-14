@@ -37,10 +37,23 @@ export function Canvas({
 
   const [pages, setPages] = useState<Page[]>([]);
   const [activePageId, setActivePageId] = useState<number | null>(null);
+  const [showCustomSizeModal, setShowCustomSizeModal] = useState(false);
+  const [customWidth, setCustomWidth] = useState("800");
+  const [customHeight, setCustomHeight] = useState("600");
   const canvasRefs = useRef<Map<number, fabric.Canvas>>(new Map());
 
   const handleCanvasReady = (pageId: number, canvas: fabric.Canvas) => {
     canvasRefs.current.set(pageId, canvas);
+
+    // Attach a helper to update page size from within the canvas instance
+    // This allows external tools (like ToolPalette) to trigger a resize of the page state
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (canvas as any).updatePageSize = (width: number, height: number) => {
+      setPages((prevPages) =>
+        prevPages.map((p) => (p.id === pageId ? { ...p, width, height } : p)),
+      );
+    };
+
     if (activePageId === pageId && onCanvasActive) {
       onCanvasActive(canvas);
     }
@@ -393,6 +406,11 @@ export function Canvas({
   ];
 
   const addPage = () => {
+    if (selectedPageSize === "custom") {
+      setShowCustomSizeModal(true);
+      return;
+    }
+
     const selectedSize =
       pageSizes.find((size) => size.value === selectedPageSize) || pageSizes[0];
     const newPage = {
@@ -405,6 +423,25 @@ export function Canvas({
     };
     setPages([...pages, newPage]);
     setActivePageId(newPage.id);
+  };
+
+  const handleCustomSizeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const width = parseInt(customWidth) || 800;
+    const height = parseInt(customHeight) || 600;
+
+    const newPage = {
+      id: Date.now(),
+      name: `Artboard ${pages.length + 1}`,
+      width: width,
+      height: height,
+      backgroundImage: null,
+      hasContent: false,
+    };
+
+    setPages([...pages, newPage]);
+    setActivePageId(newPage.id);
+    setShowCustomSizeModal(false);
   };
 
   const deletePage = (id: number) => {
@@ -499,19 +536,35 @@ export function Canvas({
               subTargetCheck: true,
             });
 
-            // Scale to fit if too large
-            const canvasWidth = canvas.width!;
-            const canvasHeight = canvas.height!;
-            const scaleX = (canvasWidth * 0.8) / group.width!;
-            const scaleY = (canvasHeight * 0.8) / group.height!;
-            const scale = Math.min(scaleX, scaleY, 1); // Don't scale up if smaller
+            // Use SVG dimensions if available to update canvas size
+            // Parse dimensions as they might be strings (e.g., "500px")
+            const svgWidth =
+              typeof _options.width === "number"
+                ? _options.width
+                : parseFloat(_options.width) || group.width || 800;
+            const svgHeight =
+              typeof _options.height === "number"
+                ? _options.height
+                : parseFloat(_options.height) || group.height || 600;
 
-            group.scale(scale);
+            // Update page state to show we have content and update dimensions
+            setPages(
+              pages.map((page) =>
+                page.id === pageId
+                  ? {
+                      ...page,
+                      hasContent: true,
+                      width: svgWidth,
+                      height: svgHeight,
+                    }
+                  : page,
+              ),
+            );
 
-            // Center the content
+            // Position the content in the center of the new dimensions
             group.set({
-              left: canvasWidth / 2,
-              top: canvasHeight / 2,
+              left: svgWidth / 2,
+              top: svgHeight / 2,
               originX: "center",
               originY: "center",
             });
@@ -519,13 +572,6 @@ export function Canvas({
             canvas.add(group);
             canvas.setActiveObject(group);
             canvas.requestRenderAll();
-
-            // Update page state to show we have content
-            setPages(
-              pages.map((page) =>
-                page.id === pageId ? { ...page, hasContent: true } : page,
-              ),
-            );
           } catch (error) {
             console.error("Error loading SVG:", error);
           }
@@ -666,7 +712,6 @@ export function Canvas({
       <div className="flex-1 overflow-auto p-8" onWheel={handleWheel}>
         <div
           className="min-h-full flex flex-col items-center justify-start gap-16 py-16 origin-top transition-transform duration-200 ease-out"
-          style={{ transform: `scale(${zoom})` }}
         >
           {pages.map((page) => (
             <div key={page.id} className="relative group/page">
@@ -674,12 +719,13 @@ export function Canvas({
                 className={`bg-white shadow-2xl relative transition-shadow ${
                   activePageId === page.id ? "ring-2 ring-[#1C75BC]" : ""
                 }`}
-                style={{ width: page.width, height: page.height }}
+                style={{ width: page.width * zoom, height: page.height * zoom }}
                 onClick={() => setActivePageId(page.id)}
               >
                 <FabricCanvas
                   width={page.width}
                   height={page.height}
+                  zoom={zoom}
                   onCanvasReady={(canvas) => handleCanvasReady(page.id, canvas)}
                 />
 
@@ -703,18 +749,6 @@ export function Canvas({
                   </div>
                 )}
 
-                {/* Grid overlay */}
-                <div
-                  className="absolute inset-0 pointer-events-none opacity-10"
-                  style={{
-                    backgroundImage: `
-                    linear-gradient(to right, #000 1px, transparent 1px),
-                    linear-gradient(to bottom, #000 1px, transparent 1px)
-                  `,
-                    backgroundSize: "20px 20px",
-                  }}
-                />
-
                 {/* Artboard Label */}
                 <div className="absolute -top-10 left-0 text-xs text-slate-500 font-medium flex items-center gap-2 z-50 bg-[#E8F1F8] px-2 py-1 rounded">
                   <span>{page.name}</span>
@@ -734,43 +768,66 @@ export function Canvas({
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
-
-                {/* Ruler markers - Top */}
-                <div className="absolute -top-4 left-0 right-0 h-4 bg-[#323232] border-b border-[#1a1a1a] flex items-center text-[10px] text-gray-500 overflow-hidden">
-                  {Array.from({ length: Math.ceil(page.width / 50) + 1 }).map(
-                    (_, i) => (
-                      <div
-                        key={i}
-                        style={{ width: "50px" }}
-                        className="text-center"
-                      >
-                        {i * 50}
-                      </div>
-                    ),
-                  )}
-                </div>
-
-                {/* Ruler markers - Left */}
-                <div className="absolute -left-4 top-0 bottom-0 w-4 bg-[#323232] border-r border-[#1a1a1a] flex flex-col text-[10px] text-gray-500 overflow-hidden">
-                  {Array.from({ length: Math.ceil(page.height / 50) + 1 }).map(
-                    (_, i) => (
-                      <div
-                        key={i}
-                        style={{ height: "50px" }}
-                        className="flex items-center justify-center"
-                      >
-                        <span className="transform -rotate-90 whitespace-nowrap">
-                          {i * 50}
-                        </span>
-                      </div>
-                    ),
-                  )}
-                </div>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Custom Size Modal */}
+      {showCustomSizeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-80 border border-slate-200">
+            <h3 className="text-lg font-semibold text-slate-800 mb-4">
+              Custom Canvas Size
+            </h3>
+            <form onSubmit={handleCustomSizeSubmit}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-1">
+                    Width (px)
+                  </label>
+                  <input
+                    type="number"
+                    value={customWidth}
+                    onChange={(e) => setCustomWidth(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1C75BC] focus:border-transparent"
+                    placeholder="e.g. 800"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-1">
+                    Height (px)
+                  </label>
+                  <input
+                    type="number"
+                    value={customHeight}
+                    onChange={(e) => setCustomHeight(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1C75BC] focus:border-transparent"
+                    placeholder="e.g. 600"
+                  />
+                </div>
+              </div>
+              <div className="mt-6 flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomSizeModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#1C75BC] hover:bg-[#155a8e] rounded-md transition-colors shadow-sm"
+                >
+                  Create Page
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

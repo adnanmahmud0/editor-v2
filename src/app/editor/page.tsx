@@ -1,10 +1,10 @@
-import { EditorProvider } from "./components/EditorContext";
-import { Editor } from "./components/Editor";
+import { InvitationEditor } from "@/components/user-editor/InvitationEditor";
 
-export default function page() {
+
+export default function App() {
   return (
-    <EditorProvider>
-      <Editor />
-    </EditorProvider>
+    <div className="min-h-screen bg-gray-100">
+      <InvitationEditor />
+    </div>
   );
 }

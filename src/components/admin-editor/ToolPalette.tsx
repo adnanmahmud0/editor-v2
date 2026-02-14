@@ -302,16 +302,23 @@ export function ToolPalette({ canvas }: ToolPaletteProps) {
 
         const group = new fabric.Group(processedObjects, options);
 
-        // Scale to fit if too large
-        const canvasWidth = canvas.width!;
-        const canvasHeight = canvas.height!;
-        const scaleX = (canvasWidth * 0.8) / group.width!;
-        const scaleY = (canvasHeight * 0.8) / group.height!;
-        const scale = Math.min(scaleX, scaleY, 1);
+        // Update canvas size to match SVG dimensions if the helper is available
+        const svgWidth =
+          typeof options.width === "number"
+            ? options.width
+            : parseFloat(options.width) || group.width || 800;
+        const svgHeight =
+          typeof options.height === "number"
+            ? options.height
+            : parseFloat(options.height) || group.height || 600;
 
-        group.scale(scale);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((canvas as any).updatePageSize) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (canvas as any).updatePageSize(svgWidth, svgHeight);
+        }
 
-        const center = canvas.getVpCenter();
+        const center = { x: svgWidth / 2, y: svgHeight / 2 };
         group.set({
           left: center.x,
           top: center.y,
