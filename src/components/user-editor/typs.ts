@@ -15,6 +15,7 @@ export interface TextElement extends BaseElement {
   italic: boolean;
   underline: boolean;
   align: 'left' | 'center' | 'right' | 'justify';
+  lineHeight?: number;
 }
 
 export interface ImageElement extends BaseElement {
