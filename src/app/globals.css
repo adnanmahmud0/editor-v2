@@ -1,3 +1,6 @@
+/* Google Fonts for the Editor */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display+SC:wght@400;700&family=Arapey:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap');
+
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

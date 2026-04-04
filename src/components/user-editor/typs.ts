@@ -6,8 +6,8 @@ export interface BaseElement {
 export interface TextElement extends BaseElement {
   type: 'text';
   content: string;
-  x: number;
-  y: number;
+  left: number;
+  top: number;
   fontSize: number;
   fontFamily: string;
   color: string;
@@ -21,10 +21,12 @@ export interface TextElement extends BaseElement {
 export interface ImageElement extends BaseElement {
   type: 'image';
   url: string;
-  x: number;
-  y: number;
+  left: number;
+  top: number;
   width: number;
   height: number;
+  scaleX?: number;
+  scaleY?: number;
   rotation: number;
   brightness: number;
   contrast: number;

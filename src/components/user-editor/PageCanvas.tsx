@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as fabric from "fabric";
 
 interface PageCanvasProps {
@@ -28,11 +28,21 @@ export function PageCanvas({
   const canvasEl = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
 
+  const isReadyRef = useRef(false);
+  const [hoveredObject, setHoveredObject] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    type: string;
+  } | null>(null);
+
   // Expose update function to parent via ref or effect if needed
   // For now, we'll rely on the parent updating the page state and this component re-rendering
 
   useEffect(() => {
     if (!canvasEl.current) return;
+    isReadyRef.current = false;
 
     // Initialize fabric canvas
     const canvas = new fabric.Canvas(canvasEl.current, {
@@ -95,7 +105,10 @@ export function PageCanvas({
 
         processObjects(canvasObjects, jsonObjects);
         canvas.renderAll();
+        isReadyRef.current = true;
       });
+    } else {
+      isReadyRef.current = true;
     }
 
     // Handle object selection
@@ -115,6 +128,32 @@ export function PageCanvas({
 
     canvas.on("selection:cleared", () => {
       onElementSelect("", { x: 0, y: 0, width: 0, height: 0 });
+    });
+
+    canvas.on("mouse:over", (e) => {
+      const obj = e.target as any;
+      if (!obj) return;
+
+      const objType = (obj.type || "").toLowerCase();
+      if (
+        objType === "text" ||
+        objType === "itext" ||
+        objType === "textbox" ||
+        objType === "image"
+      ) {
+        const bound = obj.getBoundingRect();
+        setHoveredObject({
+          x: bound.left,
+          y: bound.top,
+          width: bound.width,
+          height: bound.height,
+          type: objType,
+        });
+      }
+    });
+
+    canvas.on("mouse:out", () => {
+      setHoveredObject(null);
     });
 
     canvas.on("mouse:dblclick", (e) => {
@@ -190,6 +229,7 @@ export function PageCanvas({
 
   // Handle external updates to the canvas (e.g. from modals)
   useEffect(() => {
+    let aborted = false;
     if (!fabricCanvasRef.current) return;
 
     const canvas = fabricCanvasRef.current;
@@ -199,11 +239,22 @@ export function PageCanvas({
 
     // Simple sync: find objects in canvas and update them based on page elements
     const syncElements = async () => {
+      if (aborted || !fabricCanvasRef.current || !isReadyRef.current) return;
+
       let needsRender = false;
+      const canvas = fabricCanvasRef.current;
       const currentObjects = canvas.getObjects();
 
       // Collect ALL valid IDs from page.elements, including any nested IDs if they were expanded
-      const elementIds = new Set(page.elements.map((el: any) => el.id));
+      const elementIds = new Set(
+        page.elements.map((el: any) => el.id).filter(Boolean),
+      );
+
+      // Safety check: Don't remove if elementIds are not populated yet
+      if (page.elements.length > 0 && elementIds.size === 0) {
+        console.warn("Sync trace: elements exists but IDs are missing. Skipping sync to prevent data loss.");
+        return;
+      }
 
       // 1. Remove objects from canvas ONLY if they have an ID and that ID is definitely not in state.
       // We skip objects without IDs to avoid deleting internal Fabric objects or temporary layers.
@@ -268,9 +319,31 @@ export function PageCanvas({
       };
 
       for (const el of page.elements) {
+        if (aborted || !fabricCanvasRef.current) break;
+
         const obj = findObjectById(canvas.getObjects(), el.id);
         if (obj) {
           needsRender = true;
+
+          // Sync position, rotation and scale (Universal for all objects)
+          const positionChanged = 
+            obj.left !== el.left || 
+            obj.top !== el.top || 
+            obj.angle !== (el.rotation || 0) ||
+            (el.scaleX !== undefined && obj.scaleX !== el.scaleX) ||
+            (el.scaleY !== undefined && obj.scaleY !== el.scaleY);
+
+          if (positionChanged) {
+            obj.set({
+              left: el.left ?? obj.left,
+              top: el.top ?? obj.top,
+              angle: el.rotation ?? obj.angle,
+              scaleX: el.scaleX ?? obj.scaleX,
+              scaleY: el.scaleY ?? obj.scaleY,
+            });
+            obj.setCoords();
+            needsRender = true;
+          }
 
           // Sync visibility
           const isVisible = el.visible !== false;
@@ -297,14 +370,9 @@ export function PageCanvas({
               textAlign: el.align,
               lineHeight: el.lineHeight || 1.2,
             });
+            obj.setCoords();
           } else if (el.type === "image" || el.type === "Image") {
             const imageObj = obj as fabric.FabricImage;
-
-            // Update rotation
-            if (imageObj.angle !== el.rotation) {
-              imageObj.set({ angle: el.rotation });
-              needsRender = true;
-            }
 
             // Update source if changed
             const currentSrc =
@@ -320,22 +388,14 @@ export function PageCanvas({
                 const imgElement = await fabric.util.loadImage(el.url, {
                   crossOrigin: "anonymous",
                 });
+                
+                if (aborted || !fabricCanvasRef.current) return;
 
                 imageObj.setElement(imgElement);
                 imageObj.set({
                   width: imgElement.width,
                   height: imgElement.height,
                 });
-
-                // If we have specific width/height in the element from previous state,
-                // we might need to rescale, but usually we want to keep the scale
-                // or match the new image dimensions to the old ones.
-                // For now, let's just ensure it's updated.
-
-                if (el.width && el.height) {
-                  imageObj.scaleToWidth(el.width);
-                  imageObj.scaleToHeight(el.height);
-                }
 
                 // If the object is in a group, we need to mark the group as dirty
                 let parent = imageObj.group;
@@ -348,6 +408,21 @@ export function PageCanvas({
               } catch (err) {
                 console.error("Error updating image source:", err);
               }
+            }
+
+            // ALWAYS sync scale/size if available in state, regardless of source changes
+            if (el.width && el.height) {
+              const targetScaleX = el.scaleX ?? el.width / imageObj.width!;
+              const targetScaleY = el.scaleY ?? el.height / imageObj.height!;
+
+              console.log("Syncing image size:", el.id, {
+                targetScaleX,
+                targetScaleY,
+              });
+
+              imageObj.set({ scaleX: targetScaleX, scaleY: targetScaleY });
+              imageObj.setCoords();
+              needsRender = true;
             }
 
             // Apply filters
@@ -381,16 +456,71 @@ export function PageCanvas({
             imageObj.setCoords();
             needsRender = true;
           }
+        } else {
+          // If object NOT found, it means it's a new element (e.g. from Paste)
+          // We need to create it and add it to the canvas.
+          if (
+            el.type === "text" ||
+            el.type === "IText" ||
+            el.type === "textbox"
+          ) {
+            const textObj = new fabric.IText(el.content || "", {
+              id: el.id,
+              left: el.left,
+              top: el.top,
+              fill: el.color || "#000000",
+              fontSize: el.fontSize || 20,
+              fontFamily: el.fontFamily || "Arial",
+              fontWeight: el.bold ? "bold" : "normal",
+              fontStyle: el.italic ? "italic" : "normal",
+              underline: el.underline || false,
+              textAlign: el.align || "left",
+              lineHeight: el.lineHeight || 1.2,
+              scaleX: el.scaleX || 1,
+              scaleY: el.scaleY || 1,
+              angle: el.rotation || 0,
+            });
+            canvas.add(textObj);
+            needsRender = true;
+          } else if (el.type === "image" || el.type === "Image") {
+            if (el.url) {
+              try {
+                const imgElement = await fabric.util.loadImage(el.url, {
+                  crossOrigin: "anonymous",
+                });
+                
+                if (aborted || !fabricCanvasRef.current) return;
+
+                const imageObj = new fabric.FabricImage(imgElement, {
+                  id: el.id,
+                  left: el.left,
+                  top: el.top,
+                  angle: el.rotation || 0,
+                  scaleX: el.scaleX || el.width / imgElement.width || 1,
+                  scaleY: el.scaleY || el.height / imgElement.height || 1,
+                });
+
+                canvas.add(imageObj);
+                needsRender = true;
+              } catch (err) {
+                console.error("Error adding image during sync:", err);
+              }
+            }
+          }
         }
       }
 
-      if (needsRender) {
+      if (needsRender && !aborted && fabricCanvasRef.current) {
         canvas.requestRenderAll();
       }
     };
 
     syncElements();
-  }, [page.elements, page.id]); // Added page.id to ensure sync on page switch too
+
+    return () => {
+      aborted = true;
+    };
+  }, [page.elements, page.id]);
 
   return (
     <div
@@ -398,6 +528,25 @@ export function PageCanvas({
       style={{ width: page.width || 794, height: page.height || 1123 }}
     >
       <canvas ref={canvasEl} />
+
+      {/* Hover Tooltip/Alert */}
+      {hoveredObject && (
+        <div
+          className="absolute z-[100] pointer-events-none transition-all duration-200 ease-out"
+          style={{
+            left: hoveredObject.x + hoveredObject.width / 2,
+            top: hoveredObject.y - 40,
+            transform: "translateX(-50%)",
+          }}
+        >
+          <div className="bg-blue-600/90 backdrop-blur-md text-white text-[11px] font-semibold px-3 py-1.5 rounded-full shadow-lg border border-blue-400/30 flex items-center gap-1.5 animate-in fade-in zoom-in duration-200">
+            <span className="w-1.5 h-1.5 bg-blue-200 rounded-full animate-pulse" />
+            Double click to edit
+          </div>
+          {/* Tooltip Arrow */}
+          <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-blue-600/90 mx-auto" />
+        </div>
+      )}
     </div>
   );
 }

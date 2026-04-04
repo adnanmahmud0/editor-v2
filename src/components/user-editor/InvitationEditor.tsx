@@ -15,12 +15,19 @@ import {
   AlignCenterVertical as AlignMiddle,
   AlignEndVertical as AlignBottom,
   AlignCenterHorizontal as CenterHorizontal,
+  BringToFront,
+  SendToBack,
+  Undo2,
+  Redo2,
+  Copy,
+  ClipboardPaste,
 } from "lucide-react";
 import * as fabric from "fabric";
 import { ImageEditModal } from "./ImageEditModal";
 import { ImageElement, TextElement, Page } from "./typs";
 import { PageCanvas } from "./PageCanvas";
 import { TextEditModal } from "./TextEditModal";
+import { CloudUploadModal } from "./CloudUploadModal";
 
 export function InvitationEditor() {
   const [currentPage, setCurrentPage] = useState(1);
@@ -32,6 +39,7 @@ export function InvitationEditor() {
   >({});
   const [editingText, setEditingText] = useState<TextElement | null>(null);
   const [editingImage, setEditingImage] = useState<ImageElement | null>(null);
+  const [isImagePickerOpen, setIsImagePickerOpen] = useState(false);
   const [elementPosition, setElementPosition] = useState<{
     x: number;
     y: number;
@@ -40,6 +48,148 @@ export function InvitationEditor() {
   } | null>(null);
   const [showLayers, setShowLayers] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const [historyState, setHistoryState] = useState({
+    history: [] as string[],
+    index: -1,
+  });
+  const isUndoRedoAction = useRef(false);
+  const [clipboard, setClipboard] = useState<any[] | null>(null);
+
+  const handleCopy = () => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+
+    const activeObjects = canvas.getActiveObjects();
+    if (activeObjects.length === 0) return;
+
+    const idsToCopy = activeObjects
+      .map((obj) => (obj as any).id || (obj.get && (obj.get as any)("id")))
+      .filter((id) => id && id !== "unknown");
+
+    if (idsToCopy.length === 0) return;
+
+    // Find the elements in state corresponding to these IDs
+    const currentPageData = pages.find((p) => p.id === currentPage);
+    if (!currentPageData) return;
+
+    const elementsToCopy = (currentPageData.elements || []).filter((el: any) =>
+      idsToCopy.includes(el.id),
+    );
+
+    if (elementsToCopy.length > 0) {
+      setClipboard(JSON.parse(JSON.stringify(elementsToCopy)));
+    }
+  };
+
+  const handlePaste = () => {
+    if (!clipboard || clipboard.length === 0) return;
+
+    const currentPageData = pages.find((p) => p.id === currentPage);
+    if (!currentPageData) return;
+
+    const canvasWidth = currentPageData.width || 794;
+    const canvasHeight = currentPageData.height || 1123;
+
+    // Calculate group center of clipboard items to align with canvas center
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    clipboard.forEach((el: any) => {
+      minX = Math.min(minX, el.left || 0);
+      minY = Math.min(minY, el.top || 0);
+      maxX = Math.max(maxX, (el.left || 0) + (el.width || 50));
+      maxY = Math.max(maxY, (el.top || 0) + (el.height || 50));
+    });
+
+    const clipboardCenterX = (minX + maxX) / 2;
+    const clipboardCenterY = (minY + maxY) / 2;
+
+    const offsetX = canvasWidth / 2 - clipboardCenterX;
+    const offsetY = canvasHeight / 2 - clipboardCenterY;
+
+    setPages((prevPages) => {
+      const updated = prevPages.map((p) => {
+        if (p.id !== currentPage) return p;
+
+        const newElements = clipboard.map((el) => {
+          return {
+            ...el,
+            id: `${el.type || "element"}-${Math.random().toString(36).substr(2, 9)}`,
+            left: (el.left || 0) + offsetX,
+            top: (el.top || 0) + offsetY,
+          };
+        });
+
+        return {
+          ...p,
+          elements: [...(p.elements || []), ...newElements],
+        };
+      });
+      saveToHistory(updated);
+      return updated;
+    });
+  };
+
+  const saveToHistory = (newPages: any[]) => {
+    if (isUndoRedoAction.current) return;
+
+    const pagesJson = JSON.stringify(newPages);
+    
+    setHistoryState((prev) => {
+      // Avoid double save if nothing changed
+      if (prev.history[prev.index] === pagesJson) return prev;
+
+      const newHistory = prev.history.slice(0, prev.index + 1);
+      newHistory.push(pagesJson);
+      
+      // Limit history to 50 steps
+      const finalHistory = newHistory.length > 50 ? newHistory.slice(1) : newHistory;
+      
+      return {
+        history: finalHistory,
+        index: finalHistory.length - 1,
+      };
+    });
+  };
+
+  const undo = () => {
+    setHistoryState((prev) => {
+      if (prev.index <= 0) return prev;
+      
+      isUndoRedoAction.current = true;
+      const newIndex = prev.index - 1;
+      const prevPages = JSON.parse(prev.history[newIndex]);
+      
+      setPages(prevPages);
+      
+      setTimeout(() => {
+        isUndoRedoAction.current = false;
+      }, 100);
+
+      return { ...prev, index: newIndex };
+    });
+  };
+
+  const redo = () => {
+    setHistoryState((prev) => {
+      if (prev.index >= prev.history.length - 1) return prev;
+      
+      isUndoRedoAction.current = true;
+      const newIndex = prev.index + 1;
+      const nextPages = JSON.parse(prev.history[newIndex]);
+      
+      setPages(nextPages);
+      
+      setTimeout(() => {
+        isUndoRedoAction.current = false;
+      }, 100);
+
+      return { ...prev, index: newIndex };
+    });
+  };
 
   const handleToggleVisibility = () => {
     const canvas = canvasInstances[currentPage];
@@ -54,7 +204,7 @@ export function InvitationEditor() {
     if (idsToToggle.length === 0) return;
 
     setPages((prevPages) => {
-      return prevPages.map((p) => {
+      const updated = prevPages.map((p) => {
         if (p.id !== currentPage) return p;
 
         const updatedElements = (p.elements || []).map((el: any) => {
@@ -82,6 +232,8 @@ export function InvitationEditor() {
 
         return { ...p, elements: updatedElements };
       });
+      saveToHistory(updated);
+      return updated;
     });
 
     canvas.renderAll();
@@ -130,7 +282,7 @@ export function InvitationEditor() {
 
     // 3. Update React state for pages
     setPages((prevPages) => {
-      return prevPages.map((p) => {
+      const updated = prevPages.map((p) => {
         if (p.id !== currentPage) return p;
 
         // Filter out elements that were removed
@@ -144,6 +296,8 @@ export function InvitationEditor() {
           canvasData: newCanvasJson,
         };
       });
+      saveToHistory(updated);
+      return updated;
     });
 
     // 4. Update other state
@@ -164,11 +318,59 @@ export function InvitationEditor() {
       if (e.key === "Delete" || e.key === "Backspace") {
         handleDelete();
       }
+
+      // Copy/Paste shortcuts
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        if (e.key === "c" || e.key === "C") {
+          e.preventDefault();
+          handleCopy();
+        } else if (e.key === "v" || e.key === "V") {
+          e.preventDefault();
+          handlePaste();
+        }
+      }
+
+      // Undo/Redo shortcuts
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "z") {
+          e.preventDefault();
+          if (e.shiftKey) redo();
+          else undo();
+        } else if (e.key === "y") {
+          e.preventDefault();
+          redo();
+        }
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [currentPage, canvasInstances]);
+  }, [currentPage, canvasInstances, historyState, clipboard, pages]);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      // If a modal is open, we don't want to deselect anything from the global click
+      // as the interaction is occurring with the modal.
+      if (editingText || editingImage) return;
+
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        // Click was outside the editor container
+        const canvas = canvasInstances[currentPage];
+        if (canvas && !(canvas as any).destroyed) {
+          canvas.discardActiveObject();
+          canvas.renderAll();
+        }
+        setSelectedElement(null);
+        setElementPosition(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [currentPage, canvasInstances, editingText, editingImage]);
 
   useEffect(() => {
     const loadProject = async () => {
@@ -202,8 +404,8 @@ export function InvitationEditor() {
                       id: id,
                       type: "text",
                       content: obj.text || "",
-                      x: obj.left,
-                      y: obj.top,
+                      left: obj.left,
+                      top: obj.top,
                       fontSize: obj.fontSize,
                       fontFamily: obj.fontFamily,
                       color: obj.fill,
@@ -217,8 +419,8 @@ export function InvitationEditor() {
                       id: id,
                       type: "image",
                       url: obj.src || "",
-                      x: obj.left,
-                      y: obj.top,
+                      left: obj.left,
+                      top: obj.top,
                       width: obj.width * (obj.scaleX || 1),
                       height: obj.height * (obj.scaleY || 1),
                       rotation: obj.angle || 0,
@@ -231,8 +433,8 @@ export function InvitationEditor() {
                     elements.push({
                       id: id,
                       type: "group",
-                      x: obj.left,
-                      y: obj.top,
+                      left: obj.left,
+                      top: obj.top,
                       width: obj.width * (obj.scaleX || 1),
                       height: obj.height * (obj.scaleY || 1),
                     });
@@ -241,8 +443,8 @@ export function InvitationEditor() {
                     elements.push({
                       id: id,
                       type: type,
-                      x: obj.left,
-                      y: obj.top,
+                      left: obj.left,
+                      top: obj.top,
                     });
                   }
 
@@ -258,9 +460,18 @@ export function InvitationEditor() {
             return p;
           });
 
-          setPages(initializedPages);
           if (initializedPages.length > 0) {
-            setCurrentPage(initializedPages[0].id);
+            const firstPageId = initializedPages[0].id;
+            setPages(initializedPages);
+            setCurrentPage((prev) => (prev === 1 ? firstPageId : prev));
+            
+            // Set initial history
+            setHistoryState({
+              history: [JSON.stringify(initializedPages)],
+              index: 0,
+            });
+          } else {
+            setPages(initializedPages);
           }
         }
       } catch (error) {
@@ -303,33 +514,11 @@ export function InvitationEditor() {
   ) => {
     if (!elementId || elementId === "") return;
 
-    // Find the element in the page elements
+    // Find in state first (to preserve ID and basic type if possible)
     let element = page?.elements?.find((e: any) => e.id === elementId);
 
-    // If we have a fabric object (which is the actual artwork),
-    // we want to ensure the line breaks match what's on the canvas.
-    if (
-      fabricObj &&
-      (fabricObj.type === "text" ||
-        fabricObj.type === "itext" ||
-        fabricObj.type === "textbox")
-    ) {
-      let content = fabricObj.text || "";
-      // For Textbox, _textLines contains the lines after automatic wrapping.
-      // Joining them with \n makes the line breaks in the modal match the artwork.
-      if (fabricObj.type === "textbox" && fabricObj._textLines) {
-        content = fabricObj._textLines
-          .map((line: string[]) => line.join(""))
-          .join("\n");
-      }
-
-      if (element && element.type === "text") {
-        element = { ...element, content };
-      }
-    }
-
-    // If not found in page.elements but we have fabricObj, create a virtual element for the modal
-    if (!element && fabricObj) {
+    // Always fetch current values from the actual canvas object (ground truth)
+    if (fabricObj) {
       const type = fabricObj.type?.toLowerCase();
       if (type === "text" || type === "itext" || type === "textbox") {
         let content = fabricObj.text || "";
@@ -339,14 +528,15 @@ export function InvitationEditor() {
             .join("\n");
         }
         element = {
+          ...(element || {}),
           id: elementId,
           type: "text",
           content: content,
-          x: fabricObj.left,
-          y: fabricObj.top,
+          left: fabricObj.left,
+          top: fabricObj.top,
           fontSize: fabricObj.fontSize,
           fontFamily: fabricObj.fontFamily,
-          color: fabricObj.fill,
+          color: (fabricObj.fill as string) || "#000000",
           bold: fabricObj.fontWeight === "bold",
           italic: fabricObj.fontStyle === "italic",
           underline: fabricObj.underline,
@@ -360,15 +550,16 @@ export function InvitationEditor() {
           fabricObj.src ||
           "";
         element = {
+          ...(element || {}),
           id: elementId,
           type: "image",
           url: src,
-          x: fabricObj.left,
-          y: fabricObj.top,
+          left: fabricObj.left,
+          top: fabricObj.top,
           width: fabricObj.width * fabricObj.scaleX,
           height: fabricObj.height * fabricObj.scaleY,
           rotation: fabricObj.angle,
-          brightness: 100,
+          brightness: 100, // Filters (if implemented)
           contrast: 100,
           saturation: 100,
         };
@@ -386,23 +577,23 @@ export function InvitationEditor() {
   };
 
   const handleTextSave = (updatedText: TextElement) => {
-    setPages(
-      pages.map((p) => {
-        if (p.id === currentPage) {
-          const elements = p.elements || [];
-          const exists = elements.some((e: any) => e.id === updatedText.id);
-          return {
-            ...p,
-            elements: exists
-              ? elements.map((e: any) =>
-                  e.id === updatedText.id ? updatedText : e,
-                )
-              : [...elements, updatedText],
-          };
-        }
-        return p;
-      }),
-    );
+    const updated = pages.map((p) => {
+      if (p.id === currentPage) {
+        const elements = p.elements || [];
+        const exists = elements.some((e: any) => e.id === updatedText.id);
+        return {
+          ...p,
+          elements: exists
+            ? elements.map((e: any) =>
+                e.id === updatedText.id ? updatedText : e,
+              )
+            : [...elements, updatedText],
+        };
+      }
+      return p;
+    });
+    setPages(updated);
+    saveToHistory(updated);
     setEditingText(null);
   };
 
@@ -427,21 +618,22 @@ export function InvitationEditor() {
     });
 
     setPages(newPages);
+    saveToHistory(newPages);
     setEditingImage({ ...updatedImage });
   };
 
   const handleImageDelete = (imageId: string) => {
-    setPages(
-      pages.map((p) => {
-        if (p.id === currentPage) {
-          return {
-            ...p,
-            elements: (p.elements || []).filter((e: any) => e.id !== imageId),
-          };
-        }
-        return p;
-      }),
-    );
+    const updated = pages.map((p) => {
+      if (p.id === currentPage) {
+        return {
+          ...p,
+          elements: (p.elements || []).filter((e: any) => e.id !== imageId),
+        };
+      }
+      return p;
+    });
+    setPages(updated);
+    saveToHistory(updated);
     setEditingImage(null);
     setSelectedElement(null);
   };
@@ -635,8 +827,8 @@ export function InvitationEditor() {
       id: (text as any).id as string,
       type: "text",
       content: "New Text",
-      x: 100,
-      y: 100,
+      left: 100,
+      top: 100,
       fontSize: 40,
       fontFamily: "Arial",
       color: "#000000",
@@ -646,17 +838,67 @@ export function InvitationEditor() {
       align: "left",
     };
 
-    setPages(
-      pages.map((p) => {
+    const updated = pages.map((p) => {
+      if (p.id === currentPage) {
+        return {
+          ...p,
+          elements: [...(p.elements || []), newText],
+        };
+      }
+      return p;
+    });
+    setPages(updated);
+    saveToHistory(updated);
+  };
+
+  const handleImageUpload = (data: string) => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+
+    fabric.FabricImage.fromURL(data, {
+      crossOrigin: "anonymous",
+    }).then((img) => {
+      // Scale image to fit canvas
+      const scale = Math.min(200 / img.width!, 200 / img.height!);
+      img.set({
+        scaleX: scale,
+        scaleY: scale,
+        left: 100,
+        top: 100,
+        id: `image-${Date.now()}`,
+      });
+
+      canvas.add(img);
+      canvas.setActiveObject(img);
+      canvas.renderAll();
+
+      // Update elements array
+      const newImage: ImageElement = {
+        id: (img as any).id as string,
+        type: "image",
+        url: data,
+        left: 100,
+        top: 100,
+        width: img.width! * scale,
+        height: img.height! * scale,
+        rotation: 0,
+        brightness: 100,
+        contrast: 100,
+        saturation: 100,
+      };
+
+      const updated = pages.map((p) => {
         if (p.id === currentPage) {
           return {
             ...p,
-            elements: [...(p.elements || []), newText],
+            elements: [...(p.elements || []), newImage],
           };
         }
         return p;
-      }),
-    );
+      });
+      setPages(updated);
+      saveToHistory(updated);
+    });
   };
 
   const handleAddImage = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -666,53 +908,7 @@ export function InvitationEditor() {
     const reader = new FileReader();
     reader.onload = (f) => {
       const data = f.target?.result as string;
-      const canvas = canvasInstances[currentPage];
-      if (!canvas) return;
-
-      fabric.Image.fromURL(data, {
-        crossOrigin: "anonymous",
-      }).then((img) => {
-        // Scale image to fit canvas
-        const scale = Math.min(200 / img.width!, 200 / img.height!);
-        img.set({
-          scaleX: scale,
-          scaleY: scale,
-          left: 100,
-          top: 100,
-          id: `image-${Date.now()}`,
-        });
-
-        canvas.add(img);
-        canvas.setActiveObject(img);
-        canvas.renderAll();
-
-        // Update elements array
-        const newImage: ImageElement = {
-          id: (img as any).id as string,
-          type: "image",
-          url: data,
-          x: 100,
-          y: 100,
-          width: img.width! * scale,
-          height: img.height! * scale,
-          rotation: 0,
-          brightness: 100,
-          contrast: 100,
-          saturation: 100,
-        };
-
-        setPages(
-          pages.map((p) => {
-            if (p.id === currentPage) {
-              return {
-                ...p,
-                elements: [...(p.elements || []), newImage],
-              };
-            }
-            return p;
-          }),
-        );
-      });
+      handleImageUpload(data);
     };
     reader.readAsDataURL(file);
     // Reset input
@@ -767,8 +963,8 @@ export function InvitationEditor() {
     // Sync to state manually since programmatic changes don't always trigger object:modified
     const objectId = (activeObject as any).id;
     if (objectId) {
-      setPages((prevPages) =>
-        prevPages.map((p) => {
+      setPages((prevPages) => {
+        const updated = prevPages.map((p) => {
           if (p.id !== currentPage) return p;
           return {
             ...p,
@@ -784,8 +980,70 @@ export function InvitationEditor() {
               };
             }),
           };
-        }),
-      );
+        });
+        saveToHistory(updated);
+        return updated;
+      });
+    }
+  };
+
+  const handleBringToFront = () => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    canvas.bringObjectToFront(activeObject);
+    canvas.renderAll();
+
+    const objectId = (activeObject as any).id;
+    if (objectId) {
+      setPages((prevPages) => {
+        const updated = prevPages.map((p) => {
+          if (p.id !== currentPage) return p;
+          const element = p.elements.find((el: any) => el.id === objectId);
+          if (!element) return p;
+          const otherElements = p.elements.filter(
+            (el: any) => el.id !== objectId,
+          );
+          return {
+            ...p,
+            elements: [...otherElements, element],
+          };
+        });
+        saveToHistory(updated);
+        return updated;
+      });
+    }
+  };
+
+  const handleSendToBack = () => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    canvas.sendObjectToBack(activeObject);
+    canvas.renderAll();
+
+    const objectId = (activeObject as any).id;
+    if (objectId) {
+      setPages((prevPages) => {
+        const updated = prevPages.map((p) => {
+          if (p.id !== currentPage) return p;
+          const element = p.elements.find((el: any) => el.id === objectId);
+          if (!element) return p;
+          const otherElements = p.elements.filter(
+            (el: any) => el.id !== objectId,
+          );
+          return {
+            ...p,
+            elements: [element, ...otherElements],
+          };
+        });
+        saveToHistory(updated);
+        return updated;
+      });
     }
   };
 
@@ -809,8 +1067,8 @@ export function InvitationEditor() {
     // Sync to state
     const objectId = (activeObject as any).id;
     if (objectId) {
-      setPages((prevPages) =>
-        prevPages.map((p) => {
+      setPages((prevPages) => {
+        const updated = prevPages.map((p) => {
           if (p.id !== currentPage) return p;
           return {
             ...p,
@@ -822,8 +1080,10 @@ export function InvitationEditor() {
               return updatedEl;
             }),
           };
-        }),
-      );
+        });
+        saveToHistory(updated);
+        return updated;
+      });
     }
   };
 
@@ -883,7 +1143,7 @@ export function InvitationEditor() {
         {pages.map((p) => {
           const canvas = canvasInstances[p.id];
           let thumbSrc: string | undefined;
-          if (canvas) {
+          if (canvas && !(canvas as any).destroyed) {
             try {
               thumbSrc = canvas.toDataURL({
                 format: "png",
@@ -928,7 +1188,7 @@ export function InvitationEditor() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col items-center justify-start pb-12">
-        <div className="relative flex items-center">
+        <div ref={containerRef} className="relative flex items-center">
           {/* Canvas Wrapper - Render all pages and show/hide them */}
           <div>
             {pages.map((p) => (
@@ -969,8 +1229,8 @@ export function InvitationEditor() {
                       }
 
                       if (target && target.id) {
-                        setPages((prevPages) =>
-                          prevPages.map((pageItem) => {
+                        setPages((prevPages) => {
+                          const updated = prevPages.map((pageItem) => {
                             if (pageItem.id !== p.id) return pageItem;
                             return {
                               ...pageItem,
@@ -996,13 +1256,27 @@ export function InvitationEditor() {
                                           align: target.textAlign,
                                           lineHeight: target.lineHeight,
                                         }
-                                      : {}),
+                                      : el.type === "image"
+                                        ? {
+                                            width: target.width * target.scaleX,
+                                            height:
+                                              target.height * target.scaleY,
+                                            scaleX: target.scaleX,
+                                            scaleY: target.scaleY,
+                                            url:
+                                              target.getSrc?.() ||
+                                              target._element?.src ||
+                                              el.url,
+                                          }
+                                        : {}),
                                   };
                                 },
                               ),
                             };
-                          }),
-                        );
+                          });
+                          saveToHistory(updated);
+                          return updated;
+                        });
                       }
                     });
 
@@ -1025,6 +1299,40 @@ export function InvitationEditor() {
           {/* Floating Right Toolbar */}
           <div className="absolute -right-16 top-0 flex flex-col gap-0 bg-white shadow-xl rounded-lg overflow-hidden border border-gray-100">
             <button
+              onClick={undo}
+              disabled={historyState.index <= 0}
+              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
+            </button>
+            <button
+              onClick={redo}
+              disabled={historyState.index >= historyState.history.length - 1}
+              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
+              title="Redo (Ctrl+Y)"
+            >
+              <Redo2 className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
+            </button>
+            <div className="border-b border-gray-100" />
+            <button
+              onClick={handleCopy}
+              disabled={!selectedElement}
+              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
+              title="Copy (Alt+C)"
+            >
+              <Copy className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
+            </button>
+            <button
+              onClick={handlePaste}
+              disabled={!clipboard || clipboard.length === 0}
+              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
+              title="Paste (Alt+V)"
+            >
+              <ClipboardPaste className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
+            </button>
+            <div className="border-b border-gray-100" />
+            <button
               onClick={handleAddText}
               className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group"
               title="Add Text"
@@ -1032,7 +1340,7 @@ export function InvitationEditor() {
               <Type className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
             </button>
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setIsImagePickerOpen(true)}
               className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group"
               title="Add Image"
             >
@@ -1078,46 +1386,28 @@ export function InvitationEditor() {
                 {/* Object Positioning Alignment */}
                 <div className="flex flex-col border-t border-gray-100 bg-gray-50/50">
                   <button
-                    onClick={() => handleAlign("left")}
-                    className="w-12 h-12 flex items-center justify-center hover:bg-white group transition-colors"
-                    title="Align Left"
-                  >
-                    <AlignLeft className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
-                  </button>
-                  <button
                     onClick={() => handleAlign("center")}
                     className="w-12 h-12 flex items-center justify-center hover:bg-white group transition-colors"
                     title="Align Center Horizontally"
                   >
                     <CenterHorizontal className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
                   </button>
+
+                  <div className="border-t border-gray-100 my-0.5 opacity-50" />
+
                   <button
-                    onClick={() => handleAlign("right")}
+                    onClick={handleBringToFront}
                     className="w-12 h-12 flex items-center justify-center hover:bg-white group transition-colors"
-                    title="Align Right"
+                    title="Bring to Front"
                   >
-                    <AlignRight className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                    <BringToFront className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
                   </button>
                   <button
-                    onClick={() => handleAlign("top")}
+                    onClick={handleSendToBack}
                     className="w-12 h-12 flex items-center justify-center hover:bg-white group transition-colors"
-                    title="Align Top"
+                    title="Send to Back"
                   >
-                    <AlignTop className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
-                  </button>
-                  <button
-                    onClick={() => handleAlign("middle")}
-                    className="w-12 h-12 flex items-center justify-center hover:bg-white group transition-colors"
-                    title="Align Middle Vertically"
-                  >
-                    <AlignMiddle className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
-                  </button>
-                  <button
-                    onClick={() => handleAlign("bottom")}
-                    className="w-12 h-12 flex items-center justify-center hover:bg-white group transition-colors"
-                    title="Align Bottom"
-                  >
-                    <AlignBottom className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                    <SendToBack className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
                   </button>
                 </div>
               </>
@@ -1263,6 +1553,12 @@ export function InvitationEditor() {
           }}
         />
       )}
+
+      <CloudUploadModal
+        isOpen={isImagePickerOpen}
+        onClose={() => setIsImagePickerOpen(false)}
+        onUpload={handleImageUpload}
+      />
 
       {editingImage && elementPosition && (
         <ImageEditModal
