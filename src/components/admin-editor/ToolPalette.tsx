@@ -15,6 +15,13 @@ import {
   ArrowUpToLine,
   ArrowDownToLine,
   FoldVertical,
+  Layers,
+  ChevronUp,
+  ChevronDown as ChevronDownIcon,
+  Maximize,
+  Minimize,
+  AlignHorizontalDistributeCenter,
+  AlignVerticalDistributeCenter,
 } from "lucide-react";
 import React, { useState, useEffect, useRef } from "react";
 import * as fabric from "fabric";
@@ -272,6 +279,60 @@ export function ToolPalette({ canvas }: ToolPaletteProps) {
     canvas.fire("object:modified");
   };
 
+  const handleDistribute = (direction: "horizontal" | "vertical") => {
+    if (!canvas) return;
+    const activeSelection = canvas.getActiveObject() as fabric.ActiveSelection;
+    if (!activeSelection || activeSelection.type !== "activeSelection") return;
+
+    const objects = activeSelection.getObjects();
+    if (objects.length < 3) return;
+
+    if (direction === "horizontal") {
+      objects.sort((a, b) => a.left! - b.left!);
+      const totalWidth = objects[objects.length - 1].left! - objects[0].left!;
+      const count = objects.length - 1;
+      const step = totalWidth / count;
+      const start = objects[0].left!;
+      objects.forEach((obj, i) => {
+        obj.set({ left: start + i * step });
+      });
+    } else {
+      objects.sort((a, b) => a.top! - b.top!);
+      const totalHeight = objects[objects.length - 1].top! - objects[0].top!;
+      const count = objects.length - 1;
+      const step = totalHeight / count;
+      const start = objects[0].top!;
+      objects.forEach((obj, i) => {
+        obj.set({ top: start + i * step });
+      });
+    }
+    canvas.requestRenderAll();
+    canvas.fire("object:modified");
+  };
+
+  const handleOrder = (direction: "front" | "back" | "forward" | "backward") => {
+    if (!canvas) return;
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    switch (direction) {
+      case "front":
+        (canvas as any).bringObjectToFront(activeObject);
+        break;
+      case "back":
+        (canvas as any).sendObjectToBack(activeObject);
+        break;
+      case "forward":
+        (canvas as any).bringObjectForward(activeObject);
+        break;
+      case "backward":
+        (canvas as any).sendObjectBackwards(activeObject);
+        break;
+    }
+    canvas.requestRenderAll();
+    canvas.fire("object:modified");
+  };
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !canvas) return;
@@ -355,58 +416,17 @@ export function ToolPalette({ canvas }: ToolPaletteProps) {
   };
 
   const tools = [
-    {
-      id: "select",
-      icon: MousePointer2,
-      label: "Selection Tool",
-      action: () => setActiveTool("select"),
-    },
-    {
-      id: "text",
-      icon: Type,
-      label: "Textarea Tool",
-      action: () => setActiveTool("text"),
-    },
-    {
-      id: "image",
-      icon: ImageIcon,
-      label: "Image Tool",
-      action: () => fileInputRef.current?.click(),
-    },
-    {
-      id: "rectangle",
-      icon: Square,
-      label: "Rectangle Tool",
-      action: () => addShape("rectangle"),
-    },
-    {
-      id: "ellipse",
-      icon: Circle,
-      label: "Ellipse Tool",
-      action: () => addShape("ellipse"),
-    },
-    {
-      id: "line",
-      icon: Minus,
-      label: "Line Tool",
-      action: () => addShape("line"),
-    },
-    {
-      id: "pencil",
-      icon: Pencil,
-      label: "Pencil Tool",
-      action: () => setActiveTool("pencil"),
-    },
-    {
-      id: "hand",
-      icon: Hand,
-      label: "Hand Tool",
-      action: () => setActiveTool("hand"),
-    },
+    { id: "select", icon: MousePointer2, label: "Select (V)", action: () => setActiveTool("select") },
+    { id: "hand", icon: Hand, label: "Hand (H)", action: () => setActiveTool("hand") },
+    { id: "text", icon: Type, label: "Text (T)", action: () => setActiveTool("text") },
+    { id: "pencil", icon: Pencil, label: "Pencil (P)", action: () => setActiveTool("pencil") },
+    { id: "rectangle", icon: Square, label: "Rectangle (R)", action: () => addShape("rectangle") },
+    { id: "ellipse", icon: Circle, label: "Ellipse (E)", action: () => addShape("ellipse") },
+    { id: "line", icon: Minus, label: "Line (L)", action: () => addShape("line") },
+    { id: "image", icon: ImageIcon, label: "Image (I)", action: () => fileInputRef.current?.click() },
   ];
-
   return (
-    <div className="w-16 bg-white border-r border-[#D1E1EF] flex flex-col items-center py-3 gap-1">
+    <div className="w-[72px] bg-white border-r border-[#D1E1EF] flex flex-col items-center py-3 gap-3 overflow-y-auto">
       <input
         type="file"
         ref={fileInputRef}
@@ -415,111 +435,68 @@ export function ToolPalette({ canvas }: ToolPaletteProps) {
         onChange={handleImageUpload}
       />
 
-      {tools.map((tool) => {
-        const Icon = tool.icon;
-        const isActive = activeTool === tool.id;
+      {/* Main Tools Grid */}
+      <div className="grid grid-cols-2 gap-1 p-1">
+        {tools.map((tool) => {
+          const Icon = tool.icon;
+          const isActive = activeTool === tool.id;
 
-        return (
-          <button
-            key={tool.id}
-            onClick={() => {
-              if (
-                tool.id === "text" ||
-                tool.id === "rectangle" ||
-                tool.id === "ellipse" ||
-                tool.id === "line" ||
-                tool.id === "image"
-              ) {
-                tool.action();
-              } else {
-                tool.action();
-              }
-            }}
-            className={`w-11 h-11 flex items-center justify-center rounded transition-colors group relative ${
-              isActive
-                ? "bg-[#1C75BC] text-white"
-                : "text-slate-400 hover:bg-[#E8F1F8] hover:text-[#1C75BC]"
-            }`}
-            title={tool.label}
-          >
-            <Icon className="w-5 h-5" />
+          return (
+            <button
+              key={tool.id}
+              onClick={tool.action}
+              className={`w-7 h-7 flex items-center justify-center rounded transition-all group relative ${
+                isActive
+                  ? "bg-[#1C75BC] text-white shadow-sm"
+                  : "text-slate-500 hover:bg-[#E8F1F8] hover:text-[#1C75BC]"
+              }`}
+              title={tool.label}
+            >
+              <Icon className="w-4 h-4" />
+              <div className="absolute left-full ml-3 px-2 py-1 bg-slate-800 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                {tool.label}
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
-            {/* Tooltip */}
-            <div className="absolute left-full ml-2 px-2 py-1 bg-[#1C75BC] text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-              {tool.label}
-            </div>
+      <div className="w-10 h-px bg-slate-100" />
+
+      {/* Alignment & Order Tools */}
+      <div className={`flex flex-col gap-3 px-2 ${!hasSelection ? "opacity-30 pointer-events-none" : ""}`}>
+        
+        {/* Layer Order */}
+        <div className="grid grid-cols-2 gap-1">
+          <button onClick={() => handleOrder("front")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] text-slate-500 hover:text-[#1C75BC] transition-colors" title="Bring to Front">
+            <Maximize className="w-4 h-4" />
           </button>
-        );
-      })}
+          <button onClick={() => handleOrder("back")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] text-slate-500 hover:text-[#1C75BC] transition-colors" title="Send to Back">
+            <Minimize className="w-4 h-4" />
+          </button>
+          <button onClick={() => handleOrder("forward")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] text-slate-500 hover:text-[#1C75BC] transition-colors" title="Bring Forward">
+            <ChevronUp className="w-4 h-4" />
+          </button>
+          <button onClick={() => handleOrder("backward")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] text-slate-500 hover:text-[#1C75BC] transition-colors" title="Send Backward">
+            <ChevronDownIcon className="w-4 h-4" />
+          </button>
+        </div>
 
-      {/* Alignment Tools Separator */}
-      <div className="w-8 h-px bg-slate-200 my-2" />
+        <div className="h-px bg-slate-50" />
 
-      {/* Alignment Tools */}
-      <div
-        className={`flex flex-col gap-1 ${!hasSelection ? "opacity-50 pointer-events-none" : ""}`}
-      >
-        <button
-          onClick={() => handleAlign("left")}
-          className="w-11 h-11 flex items-center justify-center rounded text-slate-400 hover:bg-[#E8F1F8] hover:text-[#1C75BC] group relative"
-          title="Align Left"
-        >
-          <AlignLeft className="w-5 h-5" />
-          <div className="absolute left-full ml-2 px-2 py-1 bg-[#1C75BC] text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-            Align Left
-          </div>
-        </button>
-        <button
-          onClick={() => handleAlign("center")}
-          className="w-11 h-11 flex items-center justify-center rounded text-slate-400 hover:bg-[#E8F1F8] hover:text-[#1C75BC] group relative"
-          title="Align Center"
-        >
-          <AlignCenter className="w-5 h-5" />
-          <div className="absolute left-full ml-2 px-2 py-1 bg-[#1C75BC] text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-            Align Center
-          </div>
-        </button>
-        <button
-          onClick={() => handleAlign("right")}
-          className="w-11 h-11 flex items-center justify-center rounded text-slate-400 hover:bg-[#E8F1F8] hover:text-[#1C75BC] group relative"
-          title="Align Right"
-        >
-          <AlignRight className="w-5 h-5" />
-          <div className="absolute left-full ml-2 px-2 py-1 bg-[#1C75BC] text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-            Align Right
-          </div>
-        </button>
-        <button
-          onClick={() => handleAlign("top")}
-          className="w-11 h-11 flex items-center justify-center rounded text-slate-400 hover:bg-[#E8F1F8] hover:text-[#1C75BC] group relative"
-          title="Align Top"
-        >
-          <ArrowUpToLine className="w-5 h-5" />
-          <div className="absolute left-full ml-2 px-2 py-1 bg-[#1C75BC] text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-            Align Top
-          </div>
-        </button>
-        <button
-          onClick={() => handleAlign("middle")}
-          className="w-11 h-11 flex items-center justify-center rounded text-slate-400 hover:bg-[#E8F1F8] hover:text-[#1C75BC] group relative"
-          title="Align Middle"
-        >
-          <FoldVertical className="w-5 h-5" />
-          <div className="absolute left-full ml-2 px-2 py-1 bg-[#1C75BC] text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-            Align Middle
-          </div>
-        </button>
-        <button
-          onClick={() => handleAlign("bottom")}
-          className="w-11 h-11 flex items-center justify-center rounded text-slate-400 hover:bg-[#E8F1F8] hover:text-[#1C75BC] group relative"
-          title="Align Bottom"
-        >
-          <ArrowDownToLine className="w-5 h-5" />
-          <div className="absolute left-full ml-2 px-2 py-1 bg-[#1C75BC] text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-            Align Bottom
-          </div>
-        </button>
+        {/* Alignment */}
+        <div className="grid grid-cols-2 gap-1 text-slate-500">
+          <button onClick={() => handleAlign("left")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Align Left"><AlignLeft className="w-4 h-4" /></button>
+          <button onClick={() => handleAlign("center")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Align Center"><AlignCenter className="w-4 h-4" /></button>
+          <button onClick={() => handleAlign("right")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Align Right"><AlignRight className="w-4 h-4" /></button>
+          <button onClick={() => handleAlign("top")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Align Top"><ArrowUpToLine className="w-4 h-4" /></button>
+          <button onClick={() => handleAlign("middle")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Align Middle"><FoldVertical className="w-4 h-4" /></button>
+          <button onClick={() => handleAlign("bottom")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Align Bottom"><ArrowDownToLine className="w-4 h-4" /></button>
+          <button onClick={() => handleDistribute("horizontal")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Distribute Horizontal"><AlignHorizontalDistributeCenter className="w-4 h-4" /></button>
+          <button onClick={() => handleDistribute("vertical")} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[#E8F1F8] hover:text-[#1C75BC]" title="Distribute Vertical"><AlignVerticalDistributeCenter className="w-4 h-4" /></button>
+        </div>
       </div>
     </div>
   );
+
 }

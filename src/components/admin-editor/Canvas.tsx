@@ -8,10 +8,12 @@ import {
   ZoomOut,
   RotateCcw,
   Download,
+  Undo2,
+  Redo2,
   FileUp,
   FileText,
 } from "lucide-react";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import * as fabric from "fabric";
 import { jsPDF } from "jspdf";
@@ -41,6 +43,212 @@ export function Canvas({
   const [customWidth, setCustomWidth] = useState("800");
   const [customHeight, setCustomHeight] = useState("600");
   const canvasRefs = useRef<Map<number, fabric.Canvas>>(new Map());
+
+  // History state
+  const [historyState, setHistoryState] = useState<{
+    history: Page[][];
+    index: number;
+  }>({
+    history: [[]],
+    index: 0,
+  });
+
+  const saveToHistory = useCallback((currentPages: Page[]) => {
+    setHistoryState((prev) => {
+      // Avoid duplicates
+      const last = prev.history[prev.index];
+      if (JSON.stringify(last) === JSON.stringify(currentPages)) return prev;
+
+      const newHistory = prev.history.slice(0, prev.index + 1);
+      newHistory.push(JSON.parse(JSON.stringify(currentPages)));
+      
+      // Limit history to 50 steps
+      if (newHistory.length > 50) newHistory.shift();
+      
+      return {
+        history: newHistory,
+        index: newHistory.length - 1,
+      };
+    });
+  }, []);
+
+  const undo = useCallback(() => {
+    setHistoryState((prev) => {
+      if (prev.index <= 0) return prev;
+      const nextIndex = prev.index - 1;
+      const previousPages = prev.history[nextIndex];
+      
+      setPages(previousPages);
+      
+      // Sync canvases
+      setTimeout(() => {
+        previousPages.forEach(async (pageData: any) => {
+          const canvas = canvasRefs.current.get(pageData.id);
+          if (canvas && pageData.canvasData) {
+            await canvas.loadFromJSON(pageData.canvasData);
+            canvas.requestRenderAll();
+          }
+        });
+      }, 0);
+
+      return { ...prev, index: nextIndex };
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setHistoryState((prev) => {
+      if (prev.index >= prev.history.length - 1) return prev;
+      const nextIndex = prev.index + 1;
+      const nextPages = prev.history[nextIndex];
+      
+      setPages(nextPages);
+      
+      // Sync canvases
+      setTimeout(() => {
+        nextPages.forEach(async (pageData: any) => {
+          const canvas = canvasRefs.current.get(pageData.id);
+          if (canvas && pageData.canvasData) {
+            await canvas.loadFromJSON(pageData.canvasData);
+            canvas.requestRenderAll();
+          }
+        });
+      }, 0);
+
+      return { ...prev, index: nextIndex };
+    });
+  }, []);
+ 
+  const [clipboard, setClipboard] = useState<any>(null);
+
+  const syncState = useCallback(() => {
+    const currentPages = pages.map((page) => {
+        const c = canvasRefs.current.get(page.id);
+        return {
+          ...page,
+          canvasData: c ? (c as any).toJSON(['id', 'data']) : null,
+        };
+    });
+    saveToHistory(currentPages);
+  }, [pages, saveToHistory]);
+
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (activePageId === null) return;
+    const canvas = canvasRefs.current.get(activePageId);
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    // Don't trigger shortcuts if user is typing in a text field
+    const targetTag = (e.target as HTMLElement).tagName.toLowerCase();
+    if (targetTag === "input" || targetTag === "textarea") return;
+
+    if (e.ctrlKey || e.metaKey) {
+      switch (e.key.toLowerCase()) {
+        case 'z':
+          e.preventDefault();
+          undo();
+          break;
+        case 'y':
+          e.preventDefault();
+          redo();
+          break;
+        case 'd':
+          e.preventDefault();
+          // Duplicate logic
+          activeObject.clone(['id', 'data']).then((cloned: any) => {
+              canvas.discardActiveObject();
+              cloned.set({
+                  left: activeObject.left! + 10,
+                  top: activeObject.top! + 10,
+                  id: `id_${Date.now()}`
+              });
+              if (cloned.type === 'activeSelection') {
+                  cloned.canvas = canvas;
+                  cloned.forEachObject((inner: any) => canvas.add(inner));
+                  cloned.setCoords();
+              } else {
+                  canvas.add(cloned);
+              }
+              canvas.setActiveObject(cloned);
+              canvas.requestRenderAll();
+              syncState();
+          });
+          break;
+        case 'c':
+          e.preventDefault();
+          activeObject.clone(['id', 'data']).then((cloned: any) => {
+              setClipboard(cloned);
+          });
+          break;
+        case 'v':
+          e.preventDefault();
+          if (!clipboard) return;
+          clipboard.clone(['id', 'data']).then((cloned: any) => {
+              canvas.discardActiveObject();
+              cloned.set({
+                  left: (activeObject.left || 0) + 20,
+                  top: (activeObject.top || 0) + 20,
+                  evented: true,
+                  id: `id_${Date.now()}`
+              });
+              if (cloned.type === 'activeSelection') {
+                  cloned.canvas = canvas;
+                  cloned.forEachObject((inner: any) => canvas.add(inner));
+                  cloned.setCoords();
+              } else {
+                  canvas.add(cloned);
+              }
+              canvas.setActiveObject(cloned);
+              canvas.requestRenderAll();
+              syncState();
+          });
+          break;
+        case 'g':
+          e.preventDefault();
+          if (e.shiftKey) {
+              if (activeObject.type === 'group') {
+                  (activeObject as any).toActiveSelection();
+                  canvas.requestRenderAll();
+                  syncState();
+              }
+          } else {
+              const activeObjects = canvas.getActiveObjects();
+              if (activeObjects.length > 1) {
+                  const group = new fabric.Group(activeObjects, {
+                      subTargetCheck: true
+                  } as any);
+                  (group as any).id = `id_${Date.now()}`;
+                  activeObjects.forEach(obj => canvas.remove(obj));
+                  canvas.add(group);
+                  canvas.setActiveObject(group);
+                  canvas.requestRenderAll();
+                  syncState();
+              }
+          }
+          break;
+      }
+    } else {
+      switch (e.key) {
+        case "Delete":
+        case "Backspace":
+          if (activeObject && activeObject.type !== "textbox" || ! (activeObject as any).isEditing) {
+              const activeObjects = canvas.getActiveObjects();
+              canvas.discardActiveObject();
+              activeObjects.forEach((obj) => canvas.remove(obj));
+              canvas.requestRenderAll();
+              syncState();
+          }
+          break;
+      }
+    }
+  }, [activePageId, undo, redo, syncState, clipboard]);
+
+  useEffect(() => {
+      window.addEventListener("keydown", handleKeyDown);
+      return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
 
   const handleCanvasReady = (pageId: number, canvas: fabric.Canvas) => {
     canvasRefs.current.set(pageId, canvas);
@@ -78,8 +286,6 @@ export function Canvas({
         // However, we can just check if scaleX changed and update width, then reset scaleX
 
         // Standard "reflow" behavior:
-        const sX = textbox.scaleX || 1;
-        // const sY = textbox.scaleY || 1; // Unused
 
         // If scaleX changed significantly but scaleY didn't (indicating side pull likely)
         // Or just always force width update for Textbox?
@@ -90,20 +296,33 @@ export function Canvas({
         // Let's assume user wants reflow on width change.
         // We can update width and reset scaleX.
 
-        // We need to check if we are pulling a side control (ml, mr) vs corner
-        // This is stored in canvas._currentTransform?.corner
-        // Typescript might complain about private properties.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const transform = (canvas as any)._currentTransform;
-        if (
-          transform &&
-          (transform.corner === "mr" || transform.corner === "ml")
-        ) {
-          // Side scaling -> Update width, reset scaleX
+        if (!transform) return;
+
+        const sX = textbox.scaleX || 1;
+
+        if (transform.corner === "mr" || transform.corner === "ml") {
+          // Side scaling -> Update width only (reflow)
           const newWidth = textbox.width! * sX;
           textbox.set({
             width: newWidth,
             scaleX: 1,
+          });
+        } else if (
+          transform.corner === "tl" ||
+          transform.corner === "tr" ||
+          transform.corner === "bl" ||
+          transform.corner === "br"
+        ) {
+          // Corner scaling -> Update font size (prevent distortion)
+          const newFontSize = Math.round(textbox.fontSize! * sX);
+          // Also update width proportionally to maintain aspect ratio during scaling
+          const newWidth = textbox.width! * sX;
+          textbox.set({
+            fontSize: newFontSize,
+            width: newWidth,
+            scaleX: 1,
+            scaleY: 1,
           });
         }
       }
@@ -113,13 +332,24 @@ export function Canvas({
     const guidelines: fabric.Line[] = [];
 
     const clearGuidelines = () => {
+
       guidelines.forEach((line) => canvas.remove(line));
       guidelines.length = 0;
       canvas.requestRenderAll();
     };
 
-    canvas.on("object:moving", (e) => {
-      const obj = e.target;
+
+    canvas.on("object:modified", syncState);
+    canvas.on("object:added", syncState);
+    canvas.on("object:removed", syncState);
+
+    canvas.on("mouse:up", () => {
+        clearGuidelines();
+        syncState();
+    });
+
+    canvas.on("object:moving", (opt) => {
+      const obj = opt.target;
       if (!obj) return;
 
       const canvasWidth = canvas.width!;
@@ -185,7 +415,8 @@ export function Canvas({
       }
     });
 
-    canvas.on("mouse:up", clearGuidelines);
+
+
 
     // Custom selection logic for Groups:
     // - Single click (detail === 1): Select the parent Group
@@ -352,27 +583,57 @@ export function Canvas({
       const page = pages[i];
       const canvas = canvasRefs.current.get(page.id);
 
-      if (i > 0) {
-        pdf.addPage(
-          [page.width, page.height],
-          page.width > page.height ? "landscape" : "portrait",
-        );
-      }
-
       if (canvas) {
         // Temporarily clear selection for clean export
         const activeObject = canvas.getActiveObject();
         canvas.discardActiveObject();
         canvas.requestRenderAll();
 
-        // Convert to image
+        // 1. Calculate Bleed Margin and Gaps
+        const bleedMm = 5;
+        const gapMm = 2; // Offset mark from design corner
+        const ptPerMm = 72 / 25.4;
+        const bleedPt = bleedMm * ptPerMm;
+        const gapPt = gapMm * ptPerMm;
+        const finalWidth = page.width + bleedPt * 2;
+        const finalHeight = page.height + bleedPt * 2;
+
+        // Correct page adding logic with bleed size
+        if (i === 0) {
+            // Re-initialize first page with bleed
+            pdf.deletePage(1);
+        }
+        pdf.addPage([finalWidth, finalHeight], page.width > page.height ? "landscape" : "portrait");
+
+        // Convert to high-res image
         const dataUrl = canvas.toDataURL({
           format: "png",
           quality: 1,
-          multiplier: 2, // Better quality
+          multiplier: 4, 
         });
 
-        pdf.addImage(dataUrl, "PNG", 0, 0, page.width, page.height);
+        // 2. Add artboard image centered on the larger page
+        pdf.addImage(dataUrl, "PNG", bleedPt, bleedPt, page.width, page.height);
+
+        // 3. Black Cut Marks (Crop Marks) with 2mm GAP
+        pdf.setDrawColor(0, 0, 0); // Black
+        pdf.setLineWidth(1);
+
+        // Top Left
+        pdf.line(bleedPt, 0, bleedPt, bleedPt - gapPt); 
+        pdf.line(0, bleedPt, bleedPt - gapPt, bleedPt);
+
+        // Top Right
+        pdf.line(finalWidth - bleedPt, 0, finalWidth - bleedPt, bleedPt - gapPt);
+        pdf.line(finalWidth, bleedPt, finalWidth - bleedPt + gapPt, bleedPt);
+
+        // Bottom Left
+        pdf.line(bleedPt, finalHeight, bleedPt, finalHeight - bleedPt + gapPt);
+        pdf.line(0, finalHeight - bleedPt, bleedPt - gapPt, finalHeight - bleedPt);
+
+        // Bottom Right
+        pdf.line(finalWidth - bleedPt, finalHeight, finalWidth - bleedPt, finalHeight - bleedPt + gapPt);
+        pdf.line(finalWidth, finalHeight - bleedPt, finalWidth - bleedPt + gapPt, finalHeight - bleedPt);
 
         // Restore selection
         if (activeObject) {
@@ -387,17 +648,12 @@ export function Canvas({
 
   const pageSizes = [
     { label: "Custom", value: "custom", width: 800, height: 600 },
-    { label: "A5 (Portrait)", value: "a5-portrait", width: 420, height: 595 },
-    { label: "A5 (Landscape)", value: "a5-landscape", width: 595, height: 420 },
-    { label: "A4 (Portrait)", value: "a4-portrait", width: 595, height: 842 },
-    { label: "A4 (Landscape)", value: "a4-landscape", width: 842, height: 595 },
-    { label: "A3 (Portrait)", value: "a3-portrait", width: 842, height: 1191 },
-    {
-      label: "A3 (Landscape)",
-      value: "a3-landscape",
-      width: 1191,
-      height: 842,
-    },
+    { label: "A5 (Portrait)", value: "a5-portrait", width: 419.5, height: 595.3 },
+    { label: "A5 (Landscape)", value: "a5-landscape", width: 595.3, height: 419.5 },
+    { label: "A4 (Portrait)", value: "a4-portrait", width: 595.3, height: 841.9 },
+    { label: "A4 (Landscape)", value: "a4-landscape", width: 841.9, height: 595.3 },
+    { label: "A3 (Portrait)", value: "a3-portrait", width: 841.9, height: 1190.6 },
+    { label: "A3 (Landscape)", value: "a3-landscape", width: 1190.6, height: 841.9 },
     { label: "Letter", value: "letter", width: 612, height: 792 },
     { label: "Legal", value: "legal", width: 612, height: 1008 },
     { label: "Tabloid", value: "tabloid", width: 792, height: 1224 },
@@ -626,6 +882,23 @@ export function Canvas({
       <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white border border-[#D1E1EF] rounded-lg px-4 py-2 flex items-center gap-4 shadow-lg z-10">
         <div className="flex items-center gap-2 border-r border-[#D1E1EF] pr-4 mr-2">
           <button
+            onClick={undo}
+            disabled={historyState.index <= 0}
+            className="p-1 hover:bg-slate-100 rounded text-slate-600 disabled:opacity-30"
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={redo}
+            disabled={historyState.index >= historyState.history.length - 1}
+            className="p-1 hover:bg-slate-100 rounded text-slate-600 disabled:opacity-30"
+            title="Redo (Ctrl+Y)"
+          >
+            <Redo2 className="w-4 h-4" />
+          </button>
+          <div className="w-px h-4 bg-[#D1E1EF] mx-2" />
+          <button
             onClick={handleZoomOut}
             className="p-1 hover:bg-slate-100 rounded text-slate-600"
             title="Zoom Out"
@@ -650,6 +923,7 @@ export function Canvas({
             <RotateCcw className="w-4 h-4" />
           </button>
         </div>
+
 
         <label className="text-sm text-slate-500">Page Size:</label>
         <select
@@ -729,25 +1003,6 @@ export function Canvas({
                   onCanvasReady={(canvas) => handleCanvasReady(page.id, canvas)}
                 />
 
-                {/* Upload Area - shown when no content */}
-                {!page.hasContent && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="pointer-events-auto">
-                      <label className="cursor-pointer flex flex-col items-center gap-2 text-gray-400 hover:text-gray-600 transition-colors">
-                        <Upload className="w-12 h-12" />
-                        <span className="text-sm">
-                          Click to upload SVG design
-                        </span>
-                        <input
-                          type="file"
-                          accept=".svg,image/*"
-                          className="hidden"
-                          onChange={(e) => handleImageUpload(page.id, e)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                )}
 
                 {/* Artboard Label */}
                 <div className="absolute -top-10 left-0 text-xs text-slate-500 font-medium flex items-center gap-2 z-50 bg-[#E8F1F8] px-2 py-1 rounded">

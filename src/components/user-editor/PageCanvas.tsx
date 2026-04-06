@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import * as fabric from "fabric";
 
 interface PageCanvasProps {
@@ -16,6 +16,7 @@ interface PageCanvasProps {
     fabricObj?: fabric.Object,
   ) => void;
   onCanvasReady?: (canvas: fabric.Canvas) => void;
+  zoom?: number;
 }
 
 export function PageCanvas({
@@ -24,6 +25,7 @@ export function PageCanvas({
   onElementSelect,
   onElementDoubleClick,
   onCanvasReady,
+  zoom = 1,
 }: PageCanvasProps) {
   const canvasEl = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
@@ -37,8 +39,68 @@ export function PageCanvas({
     type: string;
   } | null>(null);
 
-  // Expose update function to parent via ref or effect if needed
-  // For now, we'll rely on the parent updating the page state and this component re-rendering
+  // Use refs for callbacks to avoid stale closures in fabric listeners
+  const onElementSelectRef = useRef(onElementSelect);
+  const onElementDoubleClickRef = useRef(onElementDoubleClick);
+
+  useEffect(() => {
+    onElementSelectRef.current = onElementSelect;
+    onElementDoubleClickRef.current = onElementDoubleClick;
+  }, [onElementSelect, onElementDoubleClick]);
+
+  const styleControls = useCallback((obj: any) => {
+    if (!obj.controls) return;
+    
+    // In Fabric 7, controls are shared by reference. 
+    // To have different colors for different controls on the same object,
+    // we need to make sure we're not overwriting shared prototype controls.
+    obj.controls = { ...obj.controls };
+
+    const cornerColor = "#f97316"; // Orange for Scaling
+    const rotationColor = "#22c55e"; // Green for Rotation
+    const sideColor = "#ffffff";    // White for Stretching
+    const sideStroke = "#3b82f6";   // Blue outline for sides
+    
+    const corners = ["tl", "tr", "bl", "br"];
+    const middles = ["ml", "mt", "mr", "mb"];
+    
+    // Set general border style
+    obj.set({
+      transparentCorners: false,
+      cornerSize: 10,
+      cornerStyle: "rect",
+      borderColor: cornerColor,
+      borderDashArray: [4, 4],
+    });
+
+    // Explicitly set corner handles to Orange
+    corners.forEach(key => {
+      if (obj.controls[key]) {
+        obj.controls[key] = Object.create(obj.controls[key]);
+        obj.controls[key].cornerColor = cornerColor;
+        obj.controls[key].cornerStrokeColor = cornerColor;
+      }
+    });
+
+    // Explicitly set middle handles to White with Blue stroke
+    middles.forEach(key => {
+      if (obj.controls[key]) {
+        obj.controls[key] = Object.create(obj.controls[key]);
+        obj.controls[key].cornerColor = sideColor;
+        obj.controls[key].cornerStrokeColor = sideStroke;
+      }
+    });
+    
+    // Set rotation handle to Green
+    if (obj.controls.mtr) {
+      obj.controls.mtr = Object.create(obj.controls.mtr);
+      obj.controls.mtr.cornerColor = rotationColor;
+      obj.controls.mtr.cornerStrokeColor = rotationColor;
+      obj.controls.mtr.withConnection = true;
+    }
+
+    obj.setCoords();
+  }, []);
 
   useEffect(() => {
     if (!canvasEl.current) return;
@@ -48,7 +110,7 @@ export function PageCanvas({
     const canvas = new fabric.Canvas(canvasEl.current, {
       width: page.width || 794,
       height: page.height || 1123,
-      backgroundColor: "#ffffff",
+      backgroundColor: page.backgroundColor || "#ffffff",
       preserveObjectStacking: true,
     });
 
@@ -66,7 +128,7 @@ export function PageCanvas({
         const jsonObjects = page.canvasData.objects || [];
 
         // Helper to recursively assign IDs and properties
-        const processObjects = (fabObjs: any[], jsonObjs: any[]) => {
+        const processObjects = (fabObjs: any[], jsonObjs: any[], parentId?: string) => {
           fabObjs.forEach((obj: any, index: number) => {
             const jsonObj = jsonObjs[index];
 
@@ -75,10 +137,9 @@ export function PageCanvas({
               obj.id = jsonObj.id;
             }
 
-            // Assign a unique ID if still missing
+            // Assign a unique DETERMINISTIC ID if still missing
             if (!obj.id) {
-              const type = obj.type?.toLowerCase();
-              obj.id = `${type || "element"}-${Math.random().toString(36).substr(2, 9)}`;
+              obj.id = parentId ? `${parentId}-${index}` : `obj-${index}`;
             }
 
             // Ensure the ID is set as a property that Fabric's get('id') can see
@@ -95,17 +156,31 @@ export function PageCanvas({
               evented: true,
             });
 
+            styleControls(obj);
+
             const nestedFabObjects =
               obj._objects || (obj.getObjects && obj.getObjects());
             if (nestedFabObjects && jsonObj && jsonObj.objects) {
-              processObjects(nestedFabObjects, jsonObj.objects);
+              processObjects(nestedFabObjects, jsonObj.objects, obj.id);
             }
           });
         };
 
         processObjects(canvasObjects, jsonObjects);
+        
+        // Ensure dimensions are correct after load
+        canvas.setDimensions({
+          width: page.width || 794,
+          height: page.height || 1123
+        });
+        canvas.calcOffset();
         canvas.renderAll();
-        isReadyRef.current = true;
+        
+        // Give it a tiny bit of time for images to settle before starting sync
+        setTimeout(() => {
+          if (!fabricCanvasRef.current) return;
+          isReadyRef.current = true;
+        }, 50);
       });
     } else {
       isReadyRef.current = true;
@@ -127,7 +202,7 @@ export function PageCanvas({
     });
 
     canvas.on("selection:cleared", () => {
-      onElementSelect("", { x: 0, y: 0, width: 0, height: 0 });
+      onElementSelectRef.current("", { x: 0, y: 0, width: 0, height: 0 });
     });
 
     canvas.on("mouse:over", (e) => {
@@ -188,7 +263,7 @@ export function PageCanvas({
       const bound = obj.getBoundingRect();
       const id = (obj as any).id || "unknown";
 
-      onElementDoubleClick(
+      onElementDoubleClickRef.current(
         id,
         {
           x: bound.left,
@@ -214,7 +289,7 @@ export function PageCanvas({
       const id = (obj as any).id || (obj.get && (obj.get as any)("id"));
       console.log("Object selected in canvas:", obj.type, "ID:", id);
 
-      onElementSelect(id || "unknown", {
+      onElementSelectRef.current(id || "unknown", {
         x: bound.left,
         y: bound.top,
         width: bound.width,
@@ -455,7 +530,14 @@ export function PageCanvas({
             imageObj.applyFilters();
             imageObj.setCoords();
             needsRender = true;
+          } else if (el.type === "shape") {
+            (obj as any).set({
+              fill: el.fill || "#3b82f6",
+            });
+            obj.setCoords();
+            needsRender = true;
           }
+
         } else {
           // If object NOT found, it means it's a new element (e.g. from Paste)
           // We need to create it and add it to the canvas.
@@ -480,6 +562,7 @@ export function PageCanvas({
               scaleY: el.scaleY || 1,
               angle: el.rotation || 0,
             });
+            styleControls(textObj);
             canvas.add(textObj);
             needsRender = true;
           } else if (el.type === "image" || el.type === "Image") {
@@ -500,15 +583,50 @@ export function PageCanvas({
                   scaleY: el.scaleY || el.height / imgElement.height || 1,
                 });
 
+                styleControls(imageObj);
                 canvas.add(imageObj);
                 needsRender = true;
               } catch (err) {
                 console.error("Error adding image during sync:", err);
               }
             }
+          } else if (el.type === "shape") {
+            let shape: fabric.FabricObject;
+            const commonProps = {
+              id: el.id,
+              left: el.left,
+              top: el.top,
+              fill: el.fill || "#3b82f6",
+              angle: el.rotation || 0,
+              scaleX: el.scaleX || 1,
+              scaleY: el.scaleY || 1,
+            };
+
+            if (el.shapeType === "rect") {
+              shape = new fabric.Rect({
+                ...commonProps,
+                width: el.width || 100,
+                height: el.height || 100,
+              });
+            } else if (el.shapeType === "circle") {
+              shape = new fabric.Circle({
+                ...commonProps,
+                radius: (el.width || 100) / 2,
+              });
+            } else {
+              shape = new fabric.Triangle({
+                ...commonProps,
+                width: el.width || 100,
+                height: el.height || 100,
+              });
+            }
+            styleControls(shape);
+            canvas.add(shape);
+            needsRender = true;
           }
         }
       }
+
 
       if (needsRender && !aborted && fabricCanvasRef.current) {
         canvas.requestRenderAll();
@@ -522,10 +640,24 @@ export function PageCanvas({
     };
   }, [page.elements, page.id]);
 
+  // Handle background color sync separately for smoothness
+  useEffect(() => {
+    if (fabricCanvasRef.current && page.backgroundColor) {
+      fabricCanvasRef.current.set("backgroundColor", page.backgroundColor);
+      fabricCanvasRef.current.renderAll();
+    }
+  }, [page.backgroundColor]);
+
+
   return (
     <div
-      className="relative"
-      style={{ width: page.width || 794, height: page.height || 1123 }}
+      className="relative transition-transform duration-300 ease-out"
+      style={{ 
+        width: (page.width || 794), 
+        height: (page.height || 1123),
+        transform: `scale(${zoom})`,
+        transformOrigin: "top center"
+      }}
     >
       <canvas ref={canvasEl} />
 

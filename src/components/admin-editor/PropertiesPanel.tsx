@@ -7,6 +7,8 @@ import {
   Bold,
   Italic,
   Underline,
+  Plus,
+  Minus as MinusIcon,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import * as fabric from "fabric";
@@ -37,6 +39,10 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
     underline: false,
     linethrough: false,
     lineHeight: 1.16,
+    shadowBlur: 0,
+    shadowColor: "rgba(0,0,0,0.3)",
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
   });
 
   useEffect(() => {
@@ -67,6 +73,10 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
           underline: activeObjAny.underline || false,
           linethrough: activeObjAny.linethrough || false,
           lineHeight: activeObjAny.lineHeight || 1.16,
+          shadowBlur: activeObjAny.shadow?.blur || 0,
+          shadowColor: activeObjAny.shadow?.color || "rgba(0,0,0,0.3)",
+          shadowOffsetX: activeObjAny.shadow?.offsetX || 0,
+          shadowOffsetY: activeObjAny.shadow?.offsetY || 0,
         });
       }
     };
@@ -183,10 +193,40 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
     }
   };
 
+  const handleCanvasBgChange = (color: string) => {
+    if (!canvas) return;
+    canvas.set("backgroundColor", color);
+    canvas.requestRenderAll();
+    // Use an event to trigger sync if needed, or just let it be
+    canvas.fire("object:modified");
+  };
+
   if (!selectedObject) {
     return (
-      <div className="flex-1 border-b border-[#D1E1EF] p-4 overflow-auto flex items-center justify-center text-slate-400 text-xs">
-        No selection
+      <div className="flex-1 border-b border-[#D1E1EF] p-4 overflow-auto h-1/2">
+        <h3 className="text-xs font-semibold text-[#1C75BC] uppercase mb-4">
+          Artboard
+        </h3>
+        <div className="mb-6">
+          <h4 className="text-xs mb-2 text-slate-500">Background Color</h4>
+          <div className="flex gap-2">
+            <input
+              type="color"
+              className="w-10 h-10 rounded border border-[#D1E1EF] p-1 cursor-pointer"
+              value={(canvas?.backgroundColor as string) || "#ffffff"}
+              onChange={(e) => handleCanvasBgChange(e.target.value)}
+            />
+            <input
+              type="text"
+              className="flex-1 bg-slate-50 border border-[#D1E1EF] rounded px-2 py-1 text-sm text-slate-800"
+              value={(canvas?.backgroundColor as string) || "#ffffff"}
+              onChange={(e) => handleCanvasBgChange(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="text-[10px] text-slate-400 mt-10 text-center">
+            Select an element to view its properties
+        </div>
       </div>
     );
   }
@@ -355,25 +395,29 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
           </div>
           <div>
             <label className="text-xs text-slate-500">W</label>
-            <input
-              type="number"
-              className="w-full bg-slate-50 border border-[#D1E1EF] rounded px-2 py-1 text-sm text-slate-800"
-              value={props.width}
-              onChange={(e) =>
-                updateProperty("width", parseInt(e.target.value))
-              }
-            />
+            <div className="flex items-center gap-1">
+              <button onClick={() => updateProperty("width", props.width - 5)} className="p-1 hover:bg-slate-200 rounded"><MinusIcon className="w-3 h-3" /></button>
+              <input
+                type="number"
+                className="w-full bg-slate-50 border border-[#D1E1EF] rounded px-1 py-1 text-center text-xs text-slate-800"
+                value={props.width}
+                onChange={(e) => updateProperty("width", parseInt(e.target.value))}
+              />
+              <button onClick={() => updateProperty("width", props.width + 5)} className="p-1 hover:bg-slate-200 rounded"><Plus className="w-3 h-3" /></button>
+            </div>
           </div>
           <div>
             <label className="text-xs text-slate-500">H</label>
-            <input
-              type="number"
-              className="w-full bg-slate-50 border border-[#D1E1EF] rounded px-2 py-1 text-sm text-slate-800"
-              value={props.height}
-              onChange={(e) =>
-                updateProperty("height", parseInt(e.target.value))
-              }
-            />
+            <div className="flex items-center gap-1">
+              <button onClick={() => updateProperty("height", props.height - 5)} className="p-1 hover:bg-slate-200 rounded"><MinusIcon className="w-3 h-3" /></button>
+              <input
+                type="number"
+                className="w-full bg-slate-50 border border-[#D1E1EF] rounded px-1 py-1 text-center text-xs text-slate-800"
+                value={props.height}
+                onChange={(e) => updateProperty("height", parseInt(e.target.value))}
+              />
+              <button onClick={() => updateProperty("height", props.height + 5)} className="p-1 hover:bg-slate-200 rounded"><Plus className="w-3 h-3" /></button>
+            </div>
           </div>
         </div>
       </div>
@@ -435,16 +479,108 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
       {/* Opacity */}
       <div className="mb-6">
         <h4 className="text-xs mb-2 text-slate-500">Opacity</h4>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          className="w-full"
-          value={props.opacity}
-          onChange={(e) => updateProperty("opacity", parseInt(e.target.value))}
-        />
-        <div className="text-right text-xs text-slate-500 mt-1">
-          {props.opacity}%
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => updateProperty("opacity", Math.max(0, props.opacity - 10))}
+            className="p-1 hover:bg-slate-200 rounded transition-colors"
+          >
+            <MinusIcon className="w-4 h-4 text-slate-600" />
+          </button>
+          <div className="flex-1 px-1">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-[#1C75BC]"
+              value={props.opacity}
+              onChange={(e) => updateProperty("opacity", parseInt(e.target.value))}
+            />
+            <div className="text-center text-[10px] text-slate-400 mt-1 font-medium">
+              {props.opacity}%
+            </div>
+          </div>
+          <button 
+            onClick={() => updateProperty("opacity", Math.min(100, props.opacity + 10))}
+            className="p-1 hover:bg-slate-200 rounded transition-colors"
+          >
+            <Plus className="w-4 h-4 text-slate-600" />
+          </button>
+        </div>
+      </div>
+
+      {/* Stroke */}
+      <div className="mb-6 border-t border-slate-100 pt-4">
+        <h4 className="text-[10px] font-bold mb-3 text-slate-400 uppercase tracking-widest flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+          Stroke
+        </h4>
+        <div className="flex gap-2 mb-2">
+          <input
+            type="color"
+            className="w-8 h-8 rounded border border-[#D1E1EF] p-1 cursor-pointer bg-white"
+            value={props.stroke}
+            onChange={(e) => updateProperty("stroke", e.target.value)}
+          />
+          <div className="flex-1">
+            <div className="flex items-center gap-1">
+              <button onClick={() => updateProperty("strokeWidth", Math.max(0, props.strokeWidth - 1))} className="p-1 hover:bg-slate-200 rounded"><MinusIcon className="w-3 h-3" /></button>
+              <input
+                type="number"
+                className="w-full bg-slate-50 border border-[#D1E1EF] rounded px-1 py-1 text-center text-xs text-slate-800"
+                value={props.strokeWidth}
+                onChange={(e) => updateProperty("strokeWidth", parseInt(e.target.value))}
+              />
+              <button onClick={() => updateProperty("strokeWidth", props.strokeWidth + 1)} className="p-1 hover:bg-slate-200 rounded"><Plus className="w-3 h-3" /></button>
+            </div>
+            <div className="text-[9px] text-slate-400 text-center mt-1 uppercase font-medium">Width</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Shadow */}
+      <div className="mb-6 border-t border-slate-100 pt-4 pb-4">
+        <h4 className="text-[10px] font-bold mb-3 text-slate-400 uppercase tracking-widest flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+          Shadow
+        </h4>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="col-span-2 flex gap-2">
+            <input
+              type="color"
+              className="w-8 h-8 rounded border border-[#D1E1EF] p-1 cursor-pointer bg-white"
+              value={props.shadowColor.length === 7 ? props.shadowColor : "#000000"}
+              onChange={(e) => updateProperty("shadowColor", e.target.value)}
+            />
+            <div className="flex-1">
+                <input
+                    type="range"
+                    min="0"
+                    max="50"
+                    className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-[#1C75BC]"
+                    value={props.shadowBlur}
+                    onChange={(e) => updateProperty("shadowBlur", parseInt(e.target.value))}
+                />
+                <div className="text-[9px] text-slate-400 mt-1 uppercase font-medium">Blur: {props.shadowBlur}px</div>
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-400 block mb-1 uppercase font-bold">X Offset</label>
+            <input
+              type="number"
+              className="w-full bg-slate-50 border border-[#D1E1EF] rounded px-2 py-1 text-xs text-slate-800"
+              value={props.shadowOffsetX}
+              onChange={(e) => updateProperty("shadowOffsetX", parseInt(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-400 block mb-1 uppercase font-bold">Y Offset</label>
+            <input
+              type="number"
+              className="w-full bg-slate-50 border border-[#D1E1EF] rounded px-2 py-1 text-xs text-slate-800"
+              value={props.shadowOffsetY}
+              onChange={(e) => updateProperty("shadowOffsetY", parseInt(e.target.value))}
+            />
+          </div>
         </div>
       </div>
     </div>

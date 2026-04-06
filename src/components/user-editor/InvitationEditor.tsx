@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Type,
   Image,
@@ -21,10 +21,30 @@ import {
   Redo2,
   Copy,
   ClipboardPaste,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Minimize2,
+  Move,
+  Palette,
+  Square,
+  Circle,
+  Triangle as TriangleIcon,
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  AlignCenter,
+  AlignJustify,
+  Grid3X3 as CenterIcon,
+  X,
+  Sun,
+  Minus,
 } from "lucide-react";
+
 import * as fabric from "fabric";
+import { useDraggable } from "@/hooks/use-draggable";
 import { ImageEditModal } from "./ImageEditModal";
-import { ImageElement, TextElement, Page } from "./typs";
+import { ImageElement, TextElement, ShapeElement, Page } from "./typs";
 import { PageCanvas } from "./PageCanvas";
 import { TextEditModal } from "./TextEditModal";
 import { CloudUploadModal } from "./CloudUploadModal";
@@ -56,6 +76,27 @@ export function InvitationEditor() {
   });
   const isUndoRedoAction = useRef(false);
   const [clipboard, setClipboard] = useState<any[] | null>(null);
+  const [zoom, setZoom] = useState(1);
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((prev) => Math.min(prev + 0.1, 5));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((prev) => Math.max(prev - 0.1, 0.1));
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setZoom(1);
+  }, []);
+
+
+  const { position: sideToolsPos, onMouseDown: handleSideToolsDrag } = useDraggable(
+    typeof window !== 'undefined' ? (window.innerWidth / 2 + 405) : 1100,
+    typeof window !== 'undefined' ? (window.innerHeight / 2 - 200) : 120
+  );
+
+
 
   const handleCopy = () => {
     const canvas = canvasInstances[currentPage];
@@ -133,6 +174,174 @@ export function InvitationEditor() {
     });
   };
 
+  const handleDuplicate = () => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+    const activeObjects = canvas.getActiveObjects();
+    if (!activeObjects.length) return;
+
+    activeObjects.forEach((obj: any) => {
+        obj.clone((cloned: any) => {
+            canvas.discardActiveObject();
+            cloned.set({
+                left: obj.left + 15,
+                top: obj.top + 15,
+                id: `id_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+            });
+            if (cloned.type === 'activeSelection') {
+                cloned.canvas = canvas;
+                cloned.forEachObject((inner: any) => canvas.add(inner));
+                cloned.setCoords();
+            } else {
+                canvas.add(cloned);
+            }
+            canvas.setActiveObject(cloned);
+            canvas.requestRenderAll();
+            
+            const serialized = (cloned as any).toObject(['id', 'data', 'selectable', 'evented']);
+            setPages((prevPages) => {
+                const updated = prevPages.map((p) => {
+                  if (p.id !== currentPage) return p;
+                  return { ...p, elements: [...p.elements, serialized] };
+                });
+                saveToHistory(updated);
+                return updated;
+            });
+        });
+    });
+  };
+
+  const handleElementOpacityChange = (value: number) => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+    const activeObjects = canvas.getActiveObjects();
+    if (!activeObjects.length) return;
+
+    activeObjects.forEach((obj: any) => { obj.set({ opacity: value }); });
+    canvas.requestRenderAll();
+
+    const ids = activeObjects.map((obj: any) => obj.id).filter(id => id);
+    setPages((prevPages) => {
+      const updated = prevPages.map((p) => {
+        if (p.id !== currentPage) return p;
+        return {
+          ...p,
+          elements: p.elements.map((el: any) => {
+            if (ids.includes(el.id)) return { ...el, opacity: value };
+            return el;
+          }),
+        };
+      });
+      saveToHistory(updated);
+      return updated;
+    });
+  };
+
+  const handleCanvasReady = useCallback((pageId: number, canvas: fabric.Canvas) => {
+
+    setCanvasInstances((prev) => {
+      // Avoid unnecessary state updates if it's already there
+      if (prev[pageId] === canvas) return prev;
+      return { ...prev, [pageId]: canvas };
+    });
+
+    canvas.off("object:modified");
+    canvas.on("object:modified", (e) => {
+      const target = e.target as any;
+      if (!target) return;
+
+      if (
+        target.type === "text" ||
+        target.type === "iText" ||
+        target.type === "textbox"
+      ) {
+        const currentFontSize = target.fontSize || 16;
+        const sx = target.scaleX || 1;
+        const sy = target.scaleY || 1;
+
+        if (sx !== 1 || sy !== 1) {
+          const effectiveFontSize = currentFontSize * sx;
+          target.set({
+            fontSize: effectiveFontSize,
+            scaleX: 1,
+            scaleY: 1,
+          });
+          target.setCoords();
+        }
+      }
+
+      if (target && target.id) {
+        setPages((prevPages) => {
+          const updated = prevPages.map((pageItem) => {
+            if (pageItem.id !== pageId) return pageItem;
+            return {
+              ...pageItem,
+              elements: (pageItem.elements || []).map((el: any) => {
+                if (el.id !== target.id) return el;
+                return {
+                  ...el,
+                  left: target.left,
+                  top: target.top,
+                  scaleX: target.scaleX,
+                  scaleY: target.scaleY,
+                  rotation: target.angle,
+                  ...(el.type === "text"
+                    ? {
+                        content: target.text,
+                        color: target.fill as string,
+                        fontSize: target.fontSize,
+                        fontFamily: target.fontFamily,
+                        bold: target.fontWeight === "bold",
+                        italic: target.fontStyle === "italic",
+                        underline: target.underline,
+                        align: target.textAlign,
+                        lineHeight: target.lineHeight,
+                      }
+                    : el.type === "image"
+                      ? {
+                          width: target.width * target.scaleX,
+                          height: target.height * target.scaleY,
+                          scaleX: target.scaleX,
+                          scaleY: target.scaleY,
+                          url:
+                            target.getSrc?.() ||
+                            target._element?.src ||
+                            el.url,
+                        }
+                      : el.type === "shape"
+                        ? {
+                            fill: target.fill as string,
+                          }
+                        : {}),
+
+                };
+              }),
+            };
+          });
+          // Note: we'll call saveToHistory in an effect or another pattern if needed,
+          // but for direct canvas interactions, let's keep it here for now.
+          return updated;
+        });
+      }
+    });
+
+    canvas.off("object:added");
+    canvas.on("object:added", (e) => {
+      const target = e.target as any;
+      if (target && target.id) {
+        // Handle added objects if necessary (e.g. from Paste)
+      }
+    });
+
+    canvas.off("path:created");
+    canvas.on("path:created", (e: any) => {
+      const path = e.path;
+      if (path && (path as any).id === "unknown") {
+        (path as any).id = `path-${Math.random().toString(36).substr(2, 9)}`;
+      }
+    });
+  }, []);
+
   const saveToHistory = (newPages: any[]) => {
     if (isUndoRedoAction.current) return;
 
@@ -189,6 +398,153 @@ export function InvitationEditor() {
 
       return { ...prev, index: newIndex };
     });
+  };
+
+  const handleBackgroundColorChange = (color: string) => {
+    setPages((prevPages) => {
+      const updated = prevPages.map((p) => {
+        if (p.id !== currentPage) return p;
+        return {
+          ...p,
+          backgroundColor: color,
+        };
+      });
+      saveToHistory(updated);
+      return updated;
+    });
+  };
+
+  const handleAddShape = (shapeType: 'rect' | 'circle' | 'triangle') => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+
+    let shape: fabric.FabricObject;
+    const commonProps = {
+      left: 100,
+      top: 100,
+      fill: "#3b82f6",
+      id: `shape-${Date.now()}`,
+    };
+
+    if (shapeType === 'rect') {
+      shape = new fabric.Rect({
+        ...commonProps,
+        width: 100,
+        height: 100,
+      });
+    } else if (shapeType === 'circle') {
+      shape = new fabric.Circle({
+        ...commonProps,
+        radius: 50,
+      });
+    } else {
+      shape = new fabric.Triangle({
+        ...commonProps,
+        width: 100,
+        height: 100,
+      });
+    }
+
+    canvas.add(shape);
+    canvas.setActiveObject(shape);
+    canvas.renderAll();
+
+    const newShape: ShapeElement = {
+      id: (shape as any).id,
+      type: 'shape',
+      shapeType,
+      left: 100,
+      top: 100,
+      width: 100,
+      height: 100,
+      fill: "#3b82f6",
+      rotation: 0,
+    };
+
+    const updated = pages.map((p) => {
+      if (p.id === currentPage) {
+        return {
+          ...p,
+          elements: [...(p.elements || []), newShape],
+        };
+      }
+      return p;
+    });
+    setPages(updated);
+    saveToHistory(updated);
+  };
+
+  const handleElementColorChange = (color: string) => {
+    const canvas = canvasInstances[currentPage];
+    if (!canvas) return;
+    const activeObjects = canvas.getActiveObjects();
+    if (activeObjects.length === 0) return;
+
+    activeObjects.forEach((obj: any) => {
+      obj.set({ fill: color });
+    });
+    canvas.renderAll();
+
+    const idsToUpdate = activeObjects.map((obj: any) => obj.id).filter(id => id && id !== "unknown");
+
+    setPages((prevPages) => {
+      const updated = prevPages.map((p) => {
+        if (p.id !== currentPage) return p;
+        return {
+          ...p,
+          elements: (p.elements || []).map((el: any) => {
+            if (idsToUpdate.includes(el.id)) {
+              return { ...el, color: color, fill: color };
+            }
+            return el;
+          }),
+        };
+      });
+      saveToHistory(updated);
+      return updated;
+    });
+  };
+
+  const handleAddPage = () => {
+    const newId = pages.length > 0 ? Math.max(...pages.map(p => p.id)) + 1 : 1;
+    const firstPage = pages[0] || {};
+    const newPage = {
+      id: newId,
+      elements: [],
+      backgroundColor: "#ffffff",
+      width: firstPage.width || 794,
+      height: firstPage.height || 1123,
+    };
+    const updated = [...pages, newPage];
+    setPages(updated);
+    setCurrentPage(newId);
+    saveToHistory(updated);
+  };
+
+
+  const handleRemovePage = (id: number) => {
+    if (pages.length <= 1) return;
+    const updated = pages.filter(p => p.id !== id);
+    setPages(updated);
+    if (currentPage === id) {
+      setCurrentPage(updated[0].id);
+    }
+    saveToHistory(updated);
+  };
+
+  const handleMovePage = (id: number, direction: 'left' | 'right') => {
+    const index = pages.findIndex(p => p.id === id);
+    if (direction === 'left' && index > 0) {
+      const updated = [...pages];
+      [updated[index], updated[index - 1]] = [updated[index - 1], updated[index]];
+      setPages(updated);
+      saveToHistory(updated);
+    } else if (direction === 'right' && index < pages.length - 1) {
+      const updated = [...pages];
+      [updated[index], updated[index + 1]] = [updated[index + 1], updated[index]];
+      setPages(updated);
+      saveToHistory(updated);
+    }
   };
 
   const handleToggleVisibility = () => {
@@ -316,7 +672,7 @@ export function InvitationEditor() {
       }
 
       if (e.key === "Delete" || e.key === "Backspace") {
-        handleDelete();
+        handleToggleVisibility();
       }
 
       // Copy/Paste shortcuts
@@ -383,16 +739,16 @@ export function InvitationEditor() {
             if (!p.elements && p.canvasData && p.canvasData.objects) {
               const elements: any[] = [];
 
-              // Helper to extract editable elements from canvas objects
-              const extractElements = (objects: any[]) => {
-                objects.forEach((obj: any) => {
-                  const type = obj.type?.toLowerCase();
+                  // Helper to extract editable elements from canvas objects
+                  const extractElements = (objects: any[], parentId?: string) => {
+                    objects.forEach((obj: any, index: number) => {
+                      const type = obj.type?.toLowerCase();
 
-                  // Ensure EVERY object has an ID in the JSON
-                  if (!obj.id) {
-                    obj.id = `${type || "element"}-${Math.random().toString(36).substr(2, 9)}`;
-                  }
-                  const id = obj.id;
+                      // Ensure EVERY object has a STABLE ID in the JSON
+                      if (!obj.id) {
+                        obj.id = parentId ? `${parentId}-${index}` : `obj-${index}`;
+                      }
+                      const id = obj.id;
 
                   // Add ALL objects to the elements list to track them in state
                   if (
@@ -448,9 +804,9 @@ export function InvitationEditor() {
                     });
                   }
 
-                  if (obj.objects) {
-                    extractElements(obj.objects);
-                  }
+                      if (obj.objects) {
+                        extractElements(obj.objects, id);
+                      }
                 });
               };
 
@@ -484,17 +840,7 @@ export function InvitationEditor() {
     loadProject();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0f4f8]">
-        <div className="text-blue-500 font-medium">Loading design...</div>
-      </div>
-    );
-  }
-
-  const page = pages.find((p) => p.id === currentPage);
-
-  const handleElementSelect = (
+  const handleElementSelect = useCallback((
     elementId: string,
     position: { x: number; y: number; width: number; height: number },
   ) => {
@@ -505,9 +851,9 @@ export function InvitationEditor() {
     }
     setSelectedElement(elementId);
     setElementPosition(position);
-  };
+  }, []);
 
-  const handleElementDoubleClick = (
+  const handleElementDoubleClick = useCallback((
     elementId: string,
     position: { x: number; y: number; width: number; height: number },
     fabricObj?: any,
@@ -515,7 +861,7 @@ export function InvitationEditor() {
     if (!elementId || elementId === "") return;
 
     // Find in state first (to preserve ID and basic type if possible)
-    let element = page?.elements?.find((e: any) => e.id === elementId);
+    let element = pages.map(p => p.elements || []).flat().find((e: any) => e.id === elementId);
 
     // Always fetch current values from the actual canvas object (ground truth)
     if (fabricObj) {
@@ -556,8 +902,8 @@ export function InvitationEditor() {
           url: src,
           left: fabricObj.left,
           top: fabricObj.top,
-          width: fabricObj.width * fabricObj.scaleX,
-          height: fabricObj.height * fabricObj.scaleY,
+          width: fabricObj.width * (fabricObj.scaleX || 1),
+          height: fabricObj.height * (fabricObj.scaleY || 1),
           rotation: fabricObj.angle,
           brightness: 100, // Filters (if implemented)
           contrast: 100,
@@ -574,69 +920,104 @@ export function InvitationEditor() {
         setEditingImage(element as ImageElement);
       }
     }
-  };
+  }, [pages]);
 
-  const handleTextSave = (updatedText: TextElement) => {
-    const updated = pages.map((p) => {
-      if (p.id === currentPage) {
-        const elements = p.elements || [];
-        const exists = elements.some((e: any) => e.id === updatedText.id);
-        return {
-          ...p,
-          elements: exists
-            ? elements.map((e: any) =>
-                e.id === updatedText.id ? updatedText : e,
-              )
-            : [...elements, updatedText],
-        };
-      }
-      return p;
+  const handleTextSave = useCallback((updatedText: TextElement) => {
+    setPages((prevPages) => {
+      return prevPages.map((p) => {
+        if (p.id === currentPage) {
+          const elements = p.elements || [];
+          const exists = elements.some((e: any) => e.id === updatedText.id);
+          return {
+            ...p,
+            elements: exists
+              ? elements.map((e: any) =>
+                  e.id === updatedText.id ? updatedText : e,
+                )
+              : [...elements, updatedText],
+          };
+        }
+        return p;
+      });
     });
-    setPages(updated);
-    saveToHistory(updated);
     setEditingText(null);
-  };
+  }, [currentPage]);
 
-  const handleImageUpdate = (updatedImage: ImageElement) => {
-    console.log("Updating image:", updatedImage);
-    const newPages = pages.map((p) => {
-      if (p.id === currentPage) {
-        const elements = p.elements || [];
-        const exists = elements.some((e: any) => e.id === updatedImage.id);
-        const updatedElements = exists
-          ? elements.map((e: any) =>
-              e.id === updatedImage.id ? { ...updatedImage } : e,
-            )
-          : [...elements, { ...updatedImage }];
-
-        return {
-          ...p,
-          elements: updatedElements,
-        };
-      }
-      return p;
+  const handleTextUpdate = useCallback((updatedText: TextElement) => {
+    setPages((prevPages) => {
+      return prevPages.map((p) => {
+        if (p.id === currentPage) {
+          const elements = p.elements || [];
+          return {
+            ...p,
+            elements: elements.map((e: any) =>
+              e.id === updatedText.id ? { ...updatedText } : e,
+            ),
+          };
+        }
+        return p;
+      });
     });
+  }, [currentPage]);
 
-    setPages(newPages);
-    saveToHistory(newPages);
+  const handleImageUpdate = useCallback((updatedImage: ImageElement) => {
+    setPages((prevPages) => {
+      return prevPages.map((p) => {
+        if (p.id === currentPage) {
+          const elements = p.elements || [];
+          const exists = elements.some((e: any) => e.id === updatedImage.id);
+          const updatedElements = exists
+            ? elements.map((e: any) =>
+                e.id === updatedImage.id ? { ...updatedImage } : e,
+              )
+            : [...elements, { ...updatedImage }];
+
+          return {
+            ...p,
+            elements: updatedElements,
+          };
+        }
+        return p;
+      });
+    });
     setEditingImage({ ...updatedImage });
-  };
+  }, [currentPage]);
 
-  const handleImageDelete = (imageId: string) => {
-    const updated = pages.map((p) => {
-      if (p.id === currentPage) {
-        return {
-          ...p,
-          elements: (p.elements || []).filter((e: any) => e.id !== imageId),
-        };
-      }
-      return p;
+  const handleImageDelete = useCallback((imageId: string) => {
+    setPages((prevPages) => {
+      return prevPages.map((p) => {
+        if (p.id === currentPage) {
+          return {
+            ...p,
+            elements: (p.elements || []).filter((e: any) => e.id !== imageId),
+          };
+        }
+        return p;
+      });
     });
-    setPages(updated);
-    saveToHistory(updated);
     setEditingImage(null);
     setSelectedElement(null);
-  };
+  }, [currentPage]);
+
+  const handleModalClose = useCallback(() => {
+    setEditingText(null);
+    setEditingImage(null);
+    setSelectedElement(null);
+  }, []);
+
+  const handleImagePickerClose = useCallback(() => {
+    setIsImagePickerOpen(false);
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f0f4f8]">
+        <div className="text-blue-500 font-medium">Loading design...</div>
+      </div>
+    );
+  }
+
+  const page = pages.find((p) => p.id === currentPage);
 
   const downloadPDF = async () => {
     if (pages.length === 0) return;
@@ -688,7 +1069,9 @@ export function InvitationEditor() {
           const staticCanvas = new fabric.StaticCanvas(tempCanvasEl, {
             width: p.width,
             height: p.height,
+            backgroundColor: p.backgroundColor || "#ffffff",
           });
+
 
           await staticCanvas.loadFromJSON(p.canvasData);
           staticCanvas.renderAll();
@@ -916,7 +1299,7 @@ export function InvitationEditor() {
   };
 
   const handleAlign = (
-    type: "left" | "center" | "right" | "top" | "middle" | "bottom",
+    type: "left" | "center" | "right" | "top" | "middle" | "bottom" | "both",
   ) => {
     const canvas = canvasInstances[currentPage];
     if (!canvas) return;
@@ -955,7 +1338,11 @@ export function InvitationEditor() {
             (canvasHeight - boundingRect.top - boundingRect.height),
         });
         break;
+      case "both":
+        canvas.centerObject(activeObject);
+        break;
     }
+
 
     activeObject.setCoords();
     canvas.renderAll();
@@ -1139,8 +1526,8 @@ export function InvitationEditor() {
       </div>
 
       {/* Page Thumbnails */}
-      <div className="flex justify-center gap-4 py-6">
-        {pages.map((p) => {
+      <div className="flex justify-center items-center gap-4 py-6 px-4 overflow-x-auto custom-scrollbar">
+        {pages.map((p, index) => {
           const canvas = canvasInstances[p.id];
           let thumbSrc: string | undefined;
           if (canvas && !(canvas as any).destroyed) {
@@ -1155,13 +1542,41 @@ export function InvitationEditor() {
           }
 
           return (
-            <div key={p.id} className="text-center flex-shrink-0">
+            <div key={p.id} className="text-center flex-shrink-0 group relative">
+              {/* Page Reordering Controls */}
+              <div className="absolute -top-2 left-0 right-0 flex justify-between px-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                <button
+                  disabled={index === 0}
+                  onClick={() => handleMovePage(p.id, 'left')}
+                  className="w-5 h-5 bg-white rounded-full shadow-md flex items-center justify-center text-gray-600 hover:text-blue-500 disabled:opacity-30 disabled:hover:text-gray-600"
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                </button>
+                <div className="flex gap-1">
+                    {pages.length > 1 && (
+                        <button
+                            onClick={() => handleRemovePage(p.id)}
+                            className="w-5 h-5 bg-white rounded-full shadow-md flex items-center justify-center text-red-400 hover:text-red-600"
+                        >
+                            <X className="w-2.5 h-2.5" />
+                        </button>
+                    )}
+                    <button
+                    disabled={index === pages.length - 1}
+                    onClick={() => handleMovePage(p.id, 'right')}
+                    className="w-5 h-5 bg-white rounded-full shadow-md flex items-center justify-center text-gray-600 hover:text-blue-500 disabled:opacity-30 disabled:hover:text-gray-600"
+                    >
+                    <ChevronRight className="w-3 h-3" />
+                    </button>
+                </div>
+              </div>
+
               <button
                 onClick={() => setCurrentPage(p.id)}
-                className={`w-14 h-[72px] bg-[#1a2b3c] border-2 rounded shadow-sm overflow-hidden transition-all ${
+                className={`w-14 h-[72px] bg-white border-2 rounded shadow-sm overflow-hidden transition-all ${
                   currentPage === p.id
                     ? "border-blue-500 ring-2 ring-blue-500/20"
-                    : "border-transparent opacity-20"
+                    : "border-gray-200 hover:border-blue-300"
                 }`}
               >
                 {thumbSrc ? (
@@ -1179,15 +1594,26 @@ export function InvitationEditor() {
                   currentPage === p.id ? "text-blue-500" : "text-gray-400"
                 }`}
               >
-                Page {p.id}
+                Page {index + 1}
               </div>
             </div>
           );
         })}
+        
+        {/* Add Page Button */}
+        <button
+          onClick={handleAddPage}
+          className="w-14 h-[72px] flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded hover:border-blue-400 hover:bg-blue-50 transition-all group flex-shrink-0"
+          title="Add New Page"
+        >
+          <Plus className="w-6 h-6 text-gray-400 group-hover:text-blue-500" />
+          <span className="text-[10px] mt-1 text-gray-400 group-hover:text-blue-500 font-medium">Add Page</span>
+        </button>
       </div>
 
+
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col items-center justify-start pb-12">
+      <div className="flex-1 flex flex-col items-center justify-start p-12 overflow-auto custom-scrollbar">
         <div ref={containerRef} className="relative flex items-center">
           {/* Canvas Wrapper - Render all pages and show/hide them */}
           <div>
@@ -1201,176 +1627,238 @@ export function InvitationEditor() {
                   selectedElement={selectedElement}
                   onElementSelect={handleElementSelect}
                   onElementDoubleClick={handleElementDoubleClick}
-                  onCanvasReady={(canvas) => {
-                    setCanvasInstances((prev) => ({ ...prev, [p.id]: canvas }));
-
-                    canvas.on("object:modified", (e) => {
-                      const target = e.target as any;
-                      if (!target) return;
-
-                      if (
-                        target.type === "text" ||
-                        target.type === "iText" ||
-                        target.type === "textbox"
-                      ) {
-                        const currentFontSize = target.fontSize || 16;
-                        const sx = target.scaleX || 1;
-                        const sy = target.scaleY || 1;
-
-                        if (sx !== 1 || sy !== 1) {
-                          const effectiveFontSize = currentFontSize * sx;
-                          target.set({
-                            fontSize: effectiveFontSize,
-                            scaleX: 1,
-                            scaleY: 1,
-                          });
-                          target.setCoords();
-                        }
-                      }
-
-                      if (target && target.id) {
-                        setPages((prevPages) => {
-                          const updated = prevPages.map((pageItem) => {
-                            if (pageItem.id !== p.id) return pageItem;
-                            return {
-                              ...pageItem,
-                              elements: (pageItem.elements || []).map(
-                                (el: any) => {
-                                  if (el.id !== target.id) return el;
-                                  return {
-                                    ...el,
-                                    left: target.left,
-                                    top: target.top,
-                                    scaleX: target.scaleX,
-                                    scaleY: target.scaleY,
-                                    rotation: target.angle,
-                                    ...(el.type === "text"
-                                      ? {
-                                          content: target.text,
-                                          color: target.fill as string,
-                                          fontSize: target.fontSize,
-                                          fontFamily: target.fontFamily,
-                                          bold: target.fontWeight === "bold",
-                                          italic: target.fontStyle === "italic",
-                                          underline: target.underline,
-                                          align: target.textAlign,
-                                          lineHeight: target.lineHeight,
-                                        }
-                                      : el.type === "image"
-                                        ? {
-                                            width: target.width * target.scaleX,
-                                            height:
-                                              target.height * target.scaleY,
-                                            scaleX: target.scaleX,
-                                            scaleY: target.scaleY,
-                                            url:
-                                              target.getSrc?.() ||
-                                              target._element?.src ||
-                                              el.url,
-                                          }
-                                        : {}),
-                                  };
-                                },
-                              ),
-                            };
-                          });
-                          saveToHistory(updated);
-                          return updated;
-                        });
-                      }
-                    });
-
-                    canvas.on("object:added", (e) => {
-                      const target = e.target as any;
-                      if (
-                        target &&
-                        !target.id?.toString().includes("text-") &&
-                        !target.id?.toString().includes("image-")
-                      ) {
-                        // Optional: handle other objects added
-                      }
-                    });
-                  }}
+                  onCanvasReady={(canvas) => handleCanvasReady(p.id, canvas)}
+                  zoom={zoom}
                 />
               </div>
             ))}
           </div>
 
-          {/* Floating Right Toolbar */}
-          <div className="absolute -right-16 top-0 flex flex-col gap-0 bg-white shadow-xl rounded-lg overflow-hidden border border-gray-100">
-            <button
-              onClick={undo}
-              disabled={historyState.index <= 0}
-              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
-              title="Undo (Ctrl+Z)"
-            >
-              <Undo2 className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
-            </button>
-            <button
-              onClick={redo}
-              disabled={historyState.index >= historyState.history.length - 1}
-              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
-              title="Redo (Ctrl+Y)"
-            >
-              <Redo2 className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
-            </button>
-            <div className="border-b border-gray-100" />
-            <button
-              onClick={handleCopy}
-              disabled={!selectedElement}
-              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
-              title="Copy (Alt+C)"
-            >
-              <Copy className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
-            </button>
-            <button
-              onClick={handlePaste}
-              disabled={!clipboard || clipboard.length === 0}
-              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group disabled:opacity-30"
-              title="Paste (Alt+V)"
-            >
-              <ClipboardPaste className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
-            </button>
-            <div className="border-b border-gray-100" />
-            <button
-              onClick={handleAddText}
-              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group"
-              title="Add Text"
-            >
-              <Type className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
-            </button>
-            <button
-              onClick={() => setIsImagePickerOpen(true)}
-              className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group"
-              title="Add Image"
-            >
-              <Image className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
-            </button>
-            <button
-              onClick={handleToggleVisibility}
-              className="w-12 h-12 flex items-center justify-center hover:bg-red-50 border-b border-gray-100 group disabled:opacity-30"
-              title="Delete/Hide Object"
-              disabled={!selectedElement}
-            >
-              {pages
-                .find((p) => p.id === currentPage)
-                ?.elements?.find((el: any) => el.id === selectedElement)
-                ?.visible === false ? (
-                <Trash2 className="w-5 h-5 text-red-500 transition-colors" />
-              ) : (
-                <Trash2 className="w-5 h-5 text-gray-400 group-hover:text-red-500 transition-colors" />
-              )}
-            </button>
 
-            <button
-              onClick={() => setShowLayers(!showLayers)}
-              className={`w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group transition-colors ${showLayers ? "bg-blue-50" : ""}`}
-              title="Layers"
+          {/* Floating Side Toolbar */}
+          <div 
+            className="fixed flex flex-col bg-white shadow-2xl rounded-xl overflow-hidden border border-gray-200 z-[200] max-h-[90vh] overflow-y-auto custom-scrollbar"
+            style={{
+              left: `${sideToolsPos.x}px`,
+              top: `${sideToolsPos.y}px`,
+              width: "144px"
+            }}
+          >
+
+            <div 
+              className="h-6 flex items-center justify-center bg-gray-50 cursor-move border-b border-gray-100"
+              onMouseDown={handleSideToolsDrag}
             >
-              <Layers
-                className={`w-5 h-5 ${showLayers ? "text-blue-500" : "text-gray-400 group-hover:text-blue-500"}`}
-              />
-            </button>
+              <div className="w-6 h-1 bg-gray-300 rounded-full" />
+            </div>
+            {/* Main Actions Grid */}
+            <div className="grid grid-cols-3 border-b border-gray-100">
+              <button
+                onClick={undo}
+                disabled={historyState.index <= 0}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group disabled:opacity-30"
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo2 className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+              <button
+                onClick={redo}
+                disabled={historyState.index >= historyState.history.length - 1}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group disabled:opacity-30"
+                title="Redo (Ctrl+Y)"
+              >
+                <Redo2 className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+              <button
+                onClick={() => setShowLayers(!showLayers)}
+                className={`w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-50 group transition-colors ${showLayers ? "bg-blue-50" : ""}`}
+                title="Layers"
+              >
+                <Layers
+                  className={`w-5 h-5 ${showLayers ? "text-blue-500" : "text-gray-500 group-hover:text-blue-500"}`}
+                />
+              </button>
+
+              <button
+                onClick={handleCopy}
+                disabled={!selectedElement}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group disabled:opacity-30"
+                title="Copy (Alt+C)"
+              >
+                <Copy className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+              <button
+                onClick={handlePaste}
+                disabled={!clipboard || clipboard.length === 0}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group disabled:opacity-30"
+                title="Paste (Alt+V)"
+              >
+                <ClipboardPaste className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+
+              <button
+                onClick={handleToggleVisibility}
+                className="w-12 h-12 flex items-center justify-center hover:bg-red-50 border-b border-gray-50 group disabled:opacity-30"
+                title="Delete Object"
+                disabled={!selectedElement}
+              >
+                  <Trash2 className="w-5 h-5 text-gray-500 group-hover:text-red-500 transition-colors" />
+              </button>
+
+              <button
+                onClick={handleAddText}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group"
+                title="Add Text"
+              >
+                <Type className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+              <button
+                onClick={() => setIsImagePickerOpen(true)}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group"
+                title="Add Image"
+              >
+                <Image className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+              <div className="relative group overflow-hidden w-12 h-12 border-b border-gray-50">
+                <button
+                  className="w-full h-full flex items-center justify-center hover:bg-gray-50 group transition-colors"
+                  title="Page Background Color"
+                >
+                  <Palette className="w-5 h-5 text-gray-500 group-hover:text-blue-500" />
+                  <input
+                    type="color"
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full scale-[2]"
+                    value={pages.find(p => p.id === currentPage)?.backgroundColor || "#ffffff"}
+                    onChange={(e) => handleBackgroundColorChange(e.target.value)}
+                  />
+                </button>
+              </div>
+
+              <button
+                onClick={handleDuplicate}
+                disabled={!selectedElement}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group disabled:opacity-30"
+                title="Duplicate Object (Ctrl+D)"
+              >
+                <div className="relative">
+                  <Copy className="w-5 h-5 text-purple-500 group-hover:text-purple-600 transition-colors" />
+                  <Plus className="w-2 h-2 absolute -top-1 -right-1 text-purple-600 bg-white rounded-full" />
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  const current = pages.find(p => p.id === currentPage)?.elements?.find((el: any) => el.id === selectedElement)?.opacity || 1;
+                  handleElementOpacityChange(Math.max(current - 0.1, 0.1));
+                }}
+                disabled={!selectedElement}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-b border-gray-50 group disabled:opacity-30"
+                title="Decrease Opacity"
+              >
+                <div className="relative">
+                    <Sun className="w-4 h-4 text-amber-400" />
+                    <Minus className="w-2.5 h-2.5 absolute -top-1 -right-2 text-red-500" />
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  const current = pages.find(p => p.id === currentPage)?.elements?.find((el: any) => el.id === selectedElement)?.opacity || 1;
+                  handleElementOpacityChange(Math.min(current + 0.1, 1));
+                }}
+                disabled={!selectedElement}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-50 group disabled:opacity-30"
+                title="Increase Opacity"
+              >
+                <div className="relative">
+                    <Sun className="w-5 h-5 text-amber-500" />
+                    <Plus className="w-2.5 h-2.5 absolute -top-1 -right-2 text-green-500" />
+                </div>
+              </button>
+
+              <button
+                onClick={handleZoomOut}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-r border-gray-50 group"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+              <button
+                onClick={handleZoomReset}
+                className="w-12 h-12 flex flex-col items-center justify-center hover:bg-white border-r border-gray-50 group"
+                title="Reset View"
+              >
+                <Maximize2 className="w-4 h-4 text-gray-500 group-hover:text-blue-500 transition-colors" />
+                <span className="text-[10px] font-bold text-gray-700 group-hover:text-blue-500 leading-none mt-0.5">{Math.round(zoom * 100)}%</span>
+              </button>
+              <button
+                onClick={handleZoomIn}
+                className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 group"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-5 h-5 text-gray-500 group-hover:text-blue-500 transition-colors" />
+              </button>
+            </div>
+
+
+
+
+
+            {/* Shapes Grid */}
+            <div className="grid grid-cols-3 border-b border-gray-100 bg-gray-50/20">
+              <button
+                onClick={() => handleAddShape('rect')}
+                className="w-12 h-12 flex items-center justify-center hover:bg-white border-r border-gray-50 group"
+                title="Rectangle"
+              >
+                <Square className="w-5 h-5 text-gray-500 group-hover:text-blue-500" />
+              </button>
+              <button
+                onClick={() => handleAddShape('circle')}
+                className="w-12 h-12 flex items-center justify-center hover:bg-white border-r border-gray-50 group"
+                title="Circle"
+              >
+                <Circle className="w-5 h-5 text-gray-500 group-hover:text-blue-500" />
+              </button>
+              <button
+                onClick={() => handleAddShape('triangle')}
+                className="w-12 h-12 flex items-center justify-center hover:bg-white group"
+                title="Triangle"
+              >
+                <TriangleIcon className="w-5 h-5 text-gray-500 group-hover:text-blue-500" />
+              </button>
+            </div>
+
+
+
+
+
+            {/* Element Fill Color - Only show when element is selected */}
+            {selectedElement && (
+                <div className="relative group overflow-hidden">
+                <button
+                    className="w-12 h-12 flex items-center justify-center hover:bg-gray-50 border-b border-gray-100 group transition-colors"
+                    title="Element Fill Color"
+                >
+                    <div 
+                        className="w-5 h-5 rounded-sm border border-gray-200" 
+                        style={{ 
+                            backgroundColor: pages.find(p => p.id === currentPage)?.elements?.find((el: any) => el.id === selectedElement)?.fill || 
+                                           pages.find(p => p.id === currentPage)?.elements?.find((el: any) => el.id === selectedElement)?.color || 
+                                           "#3b82f6" 
+                        }} 
+                    />
+                    <input
+                        type="color"
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full scale-[2]"
+                        value={pages.find(p => p.id === currentPage)?.elements?.find((el: any) => el.id === selectedElement)?.fill || 
+                               pages.find(p => p.id === currentPage)?.elements?.find((el: any) => el.id === selectedElement)?.color || 
+                               "#3b82f6"}
+                        onChange={(e) => handleElementColorChange(e.target.value)}
+                    />
+                </button>
+                </div>
+            )}
+
+
 
             <input
               type="file"
@@ -1385,13 +1873,96 @@ export function InvitationEditor() {
               <>
                 {/* Object Positioning Alignment */}
                 <div className="flex flex-col border-t border-gray-100 bg-gray-50/50">
-                  <button
-                    onClick={() => handleAlign("center")}
-                    className="w-12 h-12 flex items-center justify-center hover:bg-white group transition-colors"
-                    title="Align Center Horizontally"
-                  >
-                    <CenterHorizontal className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
-                  </button>
+                    <div className="grid grid-cols-3 gap-0">
+                      <button
+                        onClick={() => handleAlign("left")}
+                        className="w-12 h-12 flex items-center justify-center hover:bg-white group"
+                        title="Align Left"
+                      >
+                        <AlignLeft className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                      </button>
+                      <button
+                        onClick={() => handleAlign("center")}
+                        className="w-12 h-12 flex items-center justify-center hover:bg-white group border-x border-gray-100"
+                        title="Align Center (H)"
+                      >
+                        <CenterHorizontal className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                      </button>
+                      <button
+                        onClick={() => handleAlign("right")}
+                        className="w-12 h-12 flex items-center justify-center hover:bg-white group"
+                        title="Align Right"
+                      >
+                        <AlignRight className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-0 border-t border-gray-100">
+                      <button
+                        onClick={() => handleAlign("top")}
+                        className="w-12 h-12 flex items-center justify-center hover:bg-white group"
+                        title="Align Top"
+                      >
+                        <AlignTop className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                      </button>
+                      <button
+                        onClick={() => handleAlign("middle")}
+                        className="w-12 h-12 flex items-center justify-center hover:bg-white group border-x border-gray-100"
+                        title="Align Middle (V)"
+                      >
+                        <AlignMiddle className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                      </button>
+                      <button
+                        onClick={() => handleAlign("bottom")}
+                        className="w-12 h-12 flex items-center justify-center hover:bg-white group"
+                        title="Align Bottom"
+                      >
+                        <AlignBottom className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                      </button>
+                    </div>
+
+                    <button
+                        onClick={() => handleAlign("both")}
+                        className="w-full h-12 flex items-center justify-center hover:bg-white border-t border-gray-100 group transition-colors font-medium text-[10px] gap-2"
+                        title="Center on Canvas"
+                      >
+                        <CenterIcon className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                        <span className="text-gray-400 group-hover:text-blue-500">Center Both</span>
+                    </button>
+
+                    {/* Text Alignment - Only for TextElements */}
+                    {pages.find(p => p.id === currentPage)?.elements?.find((el: any) => el.id === selectedElement)?.type === "text" && (
+                    <div className="grid grid-cols-4 border-t border-gray-100 bg-gray-50/50">
+                        <button
+                        onClick={() => handleTextPropertyChange("textAlign", "left")}
+                        className="w-full h-10 flex items-center justify-center hover:bg-white group border-r border-gray-100"
+                        title="Text Align Left"
+                        >
+                        <AlignLeft className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500" />
+                        </button>
+                        <button
+                        onClick={() => handleTextPropertyChange("textAlign", "center")}
+                        className="w-full h-10 flex items-center justify-center hover:bg-white group border-r border-gray-100"
+                        title="Text Align Center"
+                        >
+                        <AlignCenter className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500" />
+                        </button>
+                        <button
+                        onClick={() => handleTextPropertyChange("textAlign", "right")}
+                        className="w-full h-10 flex items-center justify-center hover:bg-white group border-r border-gray-100"
+                        title="Text Align Right"
+                        >
+                        <AlignRight className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500" />
+                        </button>
+                        <button
+                        onClick={() => handleTextPropertyChange("textAlign", "justify")}
+                        className="w-full h-10 flex items-center justify-center hover:bg-white group"
+                        title="Text Align Justify"
+                        >
+                        <AlignJustify className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500" />
+                        </button>
+                    </div>
+                    )}
 
                   <div className="border-t border-gray-100 my-0.5 opacity-50" />
 
@@ -1410,6 +1981,7 @@ export function InvitationEditor() {
                     <SendToBack className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
                   </button>
                 </div>
+
               </>
             )}
           </div>
@@ -1546,17 +2118,15 @@ export function InvitationEditor() {
         <TextEditModal
           text={editingText}
           position={elementPosition}
+          onUpdate={handleTextUpdate}
           onSave={handleTextSave}
-          onCancel={() => {
-            setEditingText(null);
-            setSelectedElement(null);
-          }}
+          onCancel={handleModalClose}
         />
       )}
 
       <CloudUploadModal
         isOpen={isImagePickerOpen}
-        onClose={() => setIsImagePickerOpen(false)}
+        onClose={handleImagePickerClose}
         onUpload={handleImageUpload}
       />
 
@@ -1566,10 +2136,7 @@ export function InvitationEditor() {
           position={elementPosition}
           onUpdate={handleImageUpdate}
           onDelete={handleImageDelete}
-          onClose={() => {
-            setEditingImage(null);
-            setSelectedElement(null);
-          }}
+          onClose={handleModalClose}
         />
       )}
     </div>

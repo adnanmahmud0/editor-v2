@@ -1,39 +1,37 @@
-import { File, Edit, Type, ChevronDown } from "lucide-react";
+"use client";
 
-export function TopMenuBar() {
-  const menuItems = [
-    { label: "File", icon: File },
-    { label: "Edit", icon: Edit },
-    { label: "Object", icon: null },
-    { label: "Type", icon: Type },
-    { label: "Select", icon: null },
-    { label: "Effect", icon: null },
-    { label: "View", icon: null },
-    { label: "Window", icon: null },
-    { label: "Help", icon: null },
-  ];
+interface TopMenuBarProps {
+  onSave?: () => void;
+}
 
+export function TopMenuBar({ onSave }: TopMenuBarProps) {
   return (
-    <div className="h-12 bg-white border-b border-[#D1E1EF] flex items-center px-4 gap-6">
+    <div className="h-12 bg-white border-b border-[#D1E1EF] flex items-center px-4 justify-between shadow-sm z-50">
       {/* Logo Area */}
-      <div className="flex items-center gap-2">
-        <div className="w-8 h-8 bg-[#1C75BC] rounded flex items-center justify-center font-bold text-white">
+      <div className="flex items-center gap-3">
+        <div className="w-8 h-8 bg-[#1C75BC] rounded-lg flex items-center justify-center font-bold text-white shadow-sm">
           Ai
         </div>
-        <span className="text-sm font-semibold text-slate-800">Design Editor</span>
+        <div className="flex flex-col">
+          <span className="text-sm font-bold text-slate-800 tracking-tight leading-none uppercase">Admin Designer</span>
+          <span className="text-[10px] text-slate-400 font-medium tracking-wide">TEMPLATE V1.2.0</span>
+        </div>
       </div>
 
-      {/* Menu Items */}
-      <div className="flex gap-1">
-        {menuItems.map((item) => (
-          <button
-            key={item.label}
-            className="px-3 py-1.5 text-sm text-slate-700 hover:bg-[#E8F1F8] rounded transition-colors flex items-center gap-1"
-          >
-            {item.label}
-            <ChevronDown className="w-3 h-3" />
-          </button>
-        ))}
+      {/* Project Status */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 border border-[#D1E1EF] rounded-full">
+          <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Design Active</span>
+        </div>
+        
+        {/* Save/Publish could go here */}
+        <button 
+          onClick={onSave}
+          className="px-4 py-1.5 bg-[#1C75BC] hover:bg-[#1664a0] text-white text-xs font-bold rounded-lg transition-all shadow-sm active:scale-95 uppercase tracking-wide"
+        >
+          Save Changes
+        </button>
       </div>
     </div>
   );

@@ -1,7 +1,9 @@
 export interface BaseElement {
   id: string;
   visible?: boolean;
+  opacity?: number;
 }
+
 
 export interface TextElement extends BaseElement {
   type: 'text';
@@ -32,10 +34,23 @@ export interface ImageElement extends BaseElement {
   contrast: number;
   saturation: number;
 }
+export interface ShapeElement extends BaseElement {
+  type: 'shape';
+  shapeType: 'rect' | 'circle' | 'triangle';
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  fill: string;
+  rotation: number;
+  scaleX?: number;
+  scaleY?: number;
+}
 
-export type PageElement = TextElement | ImageElement | any;
+export type PageElement = TextElement | ImageElement | ShapeElement | any;
 
 export interface Page {
   id: number;
   elements: PageElement[];
+  backgroundColor?: string;
 }

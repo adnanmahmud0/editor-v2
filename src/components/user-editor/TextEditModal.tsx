@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Bold,
   Italic,
@@ -14,25 +14,22 @@ import {
   ChevronDown,
   Palette,
   Layout,
+  Move,
 } from "lucide-react";
 import type { TextElement } from "../user-editor/typs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-
+import { useDraggable } from "@/hooks/use-draggable";
 interface TextEditModalProps {
   text: TextElement;
   position: { x: number; y: number; width: number; height: number };
+  onUpdate: (text: TextElement) => void;
   onSave: (text: TextElement) => void;
   onCancel: () => void;
 }
 
 export function TextEditModal({
   text,
-  position,
+  position: basePosition,
+  onUpdate,
   onSave,
   onCancel,
 }: TextEditModalProps) {
@@ -45,6 +42,46 @@ export function TextEditModal({
   const [underline, setUnderline] = useState(text.underline);
   const [align, setAlign] = useState(text.align || "left");
   const [lineHeight, setLineHeight] = useState(text.lineHeight || 1.2);
+
+  const lastSentValues = useRef<any>(null);
+
+  // Center the modal on the screen initially
+  const initialX = typeof window !== 'undefined' ? (window.innerWidth - 850) / 2 : 50;
+  const initialY = typeof window !== 'undefined' ? (window.innerHeight - 600) / 2 : 100;
+
+  const { position: modalPos, onMouseDown: handleMouseDown } = useDraggable(initialX, initialY);
+
+  const triggerUpdate = useCallback(() => {
+    const currentValues = {
+      content,
+      fontSize,
+      fontFamily,
+      color,
+      bold,
+      italic,
+      underline,
+      align,
+      lineHeight,
+    };
+
+    // Deep-ish comparison to avoid loops
+    if (lastSentValues.current && 
+        JSON.stringify(lastSentValues.current) === JSON.stringify(currentValues)) {
+      return;
+    }
+
+    lastSentValues.current = currentValues;
+
+    onUpdate({
+      ...text,
+      ...currentValues
+    });
+  }, [onUpdate, text, content, fontSize, fontFamily, color, bold, italic, underline, align, lineHeight]);
+
+  // Effect to call update on changes
+  useEffect(() => {
+    triggerUpdate();
+  }, [triggerUpdate]);
 
   const presetSizes = [
     6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 28, 30, 32, 34, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96,
@@ -68,33 +105,45 @@ export function TextEditModal({
     });
   };
 
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onCancel]);
+
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onCancel();
+    <div 
+      className="fixed bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col w-[850px] max-h-[95vh] overflow-hidden z-[100]"
+      style={{
+        left: `${modalPos.x}px`,
+        top: `${modalPos.y}px`,
+        transform: 'none',
       }}
     >
-      <DialogContent
-        showCloseButton={false}
-        className="p-0 overflow-hidden max-w-[95vw] sm:max-w-[850px] border-none shadow-2xl rounded-2xl"
+      <div 
+        className="px-6 py-4 flex flex-row items-center justify-between bg-white border-b sticky top-0 z-10 cursor-move"
+        onMouseDown={handleMouseDown}
       >
-        <DialogHeader className="px-6 py-4 flex flex-row items-center justify-between bg-white border-b sticky top-0 z-10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
-              <Type className="w-4 h-4 text-blue-600" />
-            </div>
-            <DialogTitle className="text-lg font-semibold text-gray-800">
-              Edit Text
-            </DialogTitle>
+        <div className="flex items-center gap-2 select-none">
+          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
+            <Type className="w-4 h-4 text-blue-600" />
           </div>
-          <button
-            onClick={onCancel}
-            className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </DialogHeader>
+          <h3 className="text-lg font-semibold text-gray-800">
+            Edit Text
+          </h3>
+          <div className="ml-4 px-2 py-0.5 bg-gray-100 rounded text-[10px] text-gray-400 flex items-center gap-1">
+            <Move className="w-3 h-3" /> Drag to move
+          </div>
+        </div>
+        <button
+          onClick={onCancel}
+          className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
 
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2 px-6 py-3 bg-gray-50/50 border-b">
@@ -255,8 +304,7 @@ export function TextEditModal({
           >
             Save Changes
           </button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }
