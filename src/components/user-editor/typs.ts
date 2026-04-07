@@ -2,6 +2,7 @@ export interface BaseElement {
   id: string;
   visible?: boolean;
   opacity?: number;
+  rotation?: number;
 }
 
 
@@ -18,6 +19,7 @@ export interface TextElement extends BaseElement {
   underline: boolean;
   align: 'left' | 'center' | 'right' | 'justify';
   lineHeight?: number;
+  charSpacing?: number;
 }
 
 export interface ImageElement extends BaseElement {

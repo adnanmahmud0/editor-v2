@@ -131,118 +131,135 @@ export function Canvas({
     saveToHistory(currentPages);
   }, [pages, saveToHistory]);
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (activePageId === null) return;
-    const canvas = canvasRefs.current.get(activePageId);
-    if (!canvas) return;
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      const activeCanvas = activePageId ? canvasRefs.current.get(activePageId) : null;
+      if (!activeCanvas) return;
 
-    const activeObject = canvas.getActiveObject();
-    if (!activeObject) return;
+      // Don't trigger shortcuts if user is typing in a text field
+      const targetTag = (e.target as HTMLElement).tagName.toLowerCase();
+      const isInput = targetTag === "input" || targetTag === "textarea" || (e.target as HTMLElement).isContentEditable;
+      if (isInput) return;
 
-    // Don't trigger shortcuts if user is typing in a text field
-    const targetTag = (e.target as HTMLElement).tagName.toLowerCase();
-    if (targetTag === "input" || targetTag === "textarea") return;
-
-    if (e.ctrlKey || e.metaKey) {
-      switch (e.key.toLowerCase()) {
-        case 'z':
-          e.preventDefault();
-          undo();
-          break;
-        case 'y':
-          e.preventDefault();
-          redo();
-          break;
-        case 'd':
-          e.preventDefault();
-          // Duplicate logic
-          activeObject.clone(['id', 'data']).then((cloned: any) => {
-              canvas.discardActiveObject();
-              cloned.set({
-                  left: activeObject.left! + 10,
-                  top: activeObject.top! + 10,
-                  id: `id_${Date.now()}`
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case "z":
+            e.preventDefault();
+            if (e.shiftKey) redo();
+            else undo();
+            break;
+          case "y":
+            e.preventDefault();
+            redo();
+            break;
+          case "a":
+            e.preventDefault();
+            const allObjs = activeCanvas.getObjects();
+            if (allObjs.length > 0) {
+              const selection = new fabric.ActiveSelection(allObjs, {
+                canvas: activeCanvas,
               });
-              if (cloned.type === 'activeSelection') {
-                  cloned.canvas = canvas;
-                  cloned.forEachObject((inner: any) => canvas.add(inner));
-                  cloned.setCoords();
-              } else {
-                  canvas.add(cloned);
-              }
-              canvas.setActiveObject(cloned);
-              canvas.requestRenderAll();
-              syncState();
-          });
-          break;
-        case 'c':
-          e.preventDefault();
-          activeObject.clone(['id', 'data']).then((cloned: any) => {
-              setClipboard(cloned);
-          });
-          break;
-        case 'v':
-          e.preventDefault();
-          if (!clipboard) return;
-          clipboard.clone(['id', 'data']).then((cloned: any) => {
-              canvas.discardActiveObject();
-              cloned.set({
-                  left: (activeObject.left || 0) + 20,
-                  top: (activeObject.top || 0) + 20,
-                  evented: true,
-                  id: `id_${Date.now()}`
+              activeCanvas.setActiveObject(selection);
+              activeCanvas.requestRenderAll();
+            }
+            break;
+          case "c":
+            const copyObj = activeCanvas.getActiveObject();
+            if (copyObj) {
+              e.preventDefault();
+              copyObj.clone(["id", "data"]).then((cloned: any) => {
+                setClipboard(cloned);
               });
-              if (cloned.type === 'activeSelection') {
-                  cloned.canvas = canvas;
-                  cloned.forEachObject((inner: any) => canvas.add(inner));
+            }
+            break;
+          case "v":
+            if (clipboard) {
+              e.preventDefault();
+              clipboard.clone(["id", "data"]).then((cloned: any) => {
+                activeCanvas.discardActiveObject();
+                cloned.set({
+                  left: (cloned.left || 0) + 20,
+                  top: (cloned.top || 0) + 20,
+                  id: `id_${Date.now()}`,
+                });
+                if (cloned.type === "activeSelection") {
+                  cloned.canvas = activeCanvas;
+                  cloned.forEachObject((obj: any) => activeCanvas.add(obj));
                   cloned.setCoords();
-              } else {
-                  canvas.add(cloned);
+                } else {
+                  activeCanvas.add(cloned);
+                }
+                activeCanvas.setActiveObject(cloned);
+                activeCanvas.requestRenderAll();
+                syncState();
+              });
+            }
+            break;
+          case "d":
+            const duplicateObj = activeCanvas.getActiveObject();
+            if (duplicateObj) {
+              e.preventDefault();
+              duplicateObj.clone(["id", "data"]).then((cloned: any) => {
+                activeCanvas.discardActiveObject();
+                cloned.set({
+                  left: (duplicateObj.left || 0) + 10,
+                  top: (duplicateObj.top || 0) + 10,
+                  id: `id_${Date.now()}`,
+                });
+                if (cloned.type === "activeSelection") {
+                  cloned.canvas = activeCanvas;
+                  cloned.forEachObject((obj: any) => activeCanvas.add(obj));
+                  cloned.setCoords();
+                } else {
+                  activeCanvas.add(cloned);
+                }
+                activeCanvas.setActiveObject(cloned);
+                activeCanvas.requestRenderAll();
+                syncState();
+              });
+            }
+            break;
+          case "g":
+            e.preventDefault();
+            const activeSelectionGroup = activeCanvas.getActiveObject();
+            if (!activeSelectionGroup) break;
+            if (e.shiftKey) {
+              if (activeSelectionGroup.type === "group") {
+                (activeSelectionGroup as any).toActiveSelection();
+                activeCanvas.requestRenderAll();
+                syncState();
               }
-              canvas.setActiveObject(cloned);
-              canvas.requestRenderAll();
-              syncState();
-          });
-          break;
-        case 'g':
-          e.preventDefault();
-          if (e.shiftKey) {
-              if (activeObject.type === 'group') {
-                  (activeObject as any).toActiveSelection();
-                  canvas.requestRenderAll();
-                  syncState();
+            } else {
+              const activeObjs = activeCanvas.getActiveObjects();
+              if (activeObjs.length > 1) {
+                const group = new fabric.Group(activeObjs, {
+                  subTargetCheck: true,
+                } as any);
+                (group as any).id = `id_${Date.now()}`;
+                activeObjs.forEach((obj) => activeCanvas.remove(obj));
+                activeCanvas.add(group);
+                activeCanvas.setActiveObject(group);
+                activeCanvas.requestRenderAll();
+                syncState();
               }
-          } else {
-              const activeObjects = canvas.getActiveObjects();
-              if (activeObjects.length > 1) {
-                  const group = new fabric.Group(activeObjects, {
-                      subTargetCheck: true
-                  } as any);
-                  (group as any).id = `id_${Date.now()}`;
-                  activeObjects.forEach(obj => canvas.remove(obj));
-                  canvas.add(group);
-                  canvas.setActiveObject(group);
-                  canvas.requestRenderAll();
-                  syncState();
-              }
+            }
+            break;
+        }
+      } else {
+        if (e.key === "Delete" || e.key === "Backspace") {
+          const activeObj = activeCanvas.getActiveObject();
+          if (activeObj && (activeObj.type !== "textbox" || !(activeObj as any).isEditing)) {
+            const selected = activeCanvas.getActiveObjects();
+            activeCanvas.discardActiveObject();
+            selected.forEach((obj) => activeCanvas.remove(obj));
+            activeCanvas.requestRenderAll();
+            syncState();
           }
-          break;
+        }
       }
-    } else {
-      switch (e.key) {
-        case "Delete":
-        case "Backspace":
-          if (activeObject && activeObject.type !== "textbox" || ! (activeObject as any).isEditing) {
-              const activeObjects = canvas.getActiveObjects();
-              canvas.discardActiveObject();
-              activeObjects.forEach((obj) => canvas.remove(obj));
-              canvas.requestRenderAll();
-              syncState();
-          }
-          break;
-      }
-    }
-  }, [activePageId, undo, redo, syncState, clipboard]);
+    },
+    [activePageId, undo, redo, syncState, clipboard]
+  );
 
   useEffect(() => {
       window.addEventListener("keydown", handleKeyDown);
@@ -712,6 +729,10 @@ export function Canvas({
     }
   };
 
+  const updatePageName = (id: number, newName: string) => {
+    setPages(pages.map(page => page.id === id ? { ...page, name: newName } : page));
+  };
+
   const handlePageSizeChange = (value: string) => {
     setSelectedPageSize(value);
 
@@ -1005,8 +1026,14 @@ export function Canvas({
 
 
                 {/* Artboard Label */}
-                <div className="absolute -top-10 left-0 text-xs text-slate-500 font-medium flex items-center gap-2 z-50 bg-[#E8F1F8] px-2 py-1 rounded">
-                  <span>{page.name}</span>
+                <div className="absolute -top-10 left-0 text-xs text-slate-500 font-medium flex items-center gap-2 z-50 bg-[#E8F1F8] px-2 py-1 rounded group-hover/page:bg-white transition-colors">
+                  <input 
+                    type="text" 
+                    value={page.name}
+                    onChange={(e) => updatePageName(page.id, e.target.value)}
+                    className="bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-[#1C75BC] rounded px-1 w-24 font-bold text-slate-700"
+                    title="Rename Artboard"
+                  />
                   <span className="text-slate-400">
                     ({page.width} × {page.height}px)
                   </span>

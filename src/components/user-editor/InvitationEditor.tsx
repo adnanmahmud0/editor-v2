@@ -296,6 +296,7 @@ export function InvitationEditor() {
                         underline: target.underline,
                         align: target.textAlign,
                         lineHeight: target.lineHeight,
+                        charSpacing: target.charSpacing,
                       }
                     : el.type === "image"
                       ? {
@@ -333,14 +334,61 @@ export function InvitationEditor() {
       }
     });
 
-    canvas.off("path:created");
-    canvas.on("path:created", (e: any) => {
-      const path = e.path;
-      if (path && (path as any).id === "unknown") {
-        (path as any).id = `path-${Math.random().toString(36).substr(2, 9)}`;
+    canvas.off("mouse:dblclick");
+    canvas.on("mouse:dblclick", (e) => {
+      const target = e.target as any;
+      if (target && (target.type === "text" || target.type === "textbox" || target.type === "iText")) {
+        const textElement: TextElement = {
+            id: target.id,
+            content: target.text,
+            type: "text",
+            left: target.left,
+            top: target.top,
+            fontSize: target.fontSize,
+            fontFamily: target.fontFamily,
+            color: target.fill as string,
+            bold: target.fontWeight === "bold",
+            italic: target.fontStyle === "italic",
+            underline: target.underline,
+            align: target.textAlign,
+            lineHeight: target.lineHeight,
+            rotation: target.angle,
+        };
+        const rect = target.getBoundingRect(true);
+        setElementPosition({
+            x: rect.left,
+            y: rect.top,
+            width: rect.width,
+            height: rect.height
+        });
+        setEditingText(textElement);
+      } else if (target && target.type === "image") {
+        const imageElement: ImageElement = {
+            id: target.id,
+            type: "image",
+            url: target.getSrc?.() || target._element?.src || "",
+            left: target.left,
+            top: target.top,
+            width: target.width * target.scaleX,
+            height: target.height * target.scaleY,
+            scaleX: target.scaleX,
+            scaleY: target.scaleY,
+            rotation: target.angle,
+            brightness: target.brightness || 100,
+            contrast: target.contrast || 100,
+            saturation: target.saturation || 100
+        };
+        const rect = target.getBoundingRect(true);
+        setElementPosition({
+            x: rect.left,
+            y: rect.top,
+            width: rect.width,
+            height: rect.height
+        });
+        setEditingImage(imageElement);
       }
     });
-  }, []);
+  }, [pages]);
 
   const saveToHistory = (newPages: any[]) => {
     if (isUndoRedoAction.current) return;
