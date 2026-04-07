@@ -174,40 +174,57 @@ export function InvitationEditor() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
     const canvas = canvasInstances[currentPage];
     if (!canvas) return;
     const activeObjects = canvas.getActiveObjects();
     if (!activeObjects.length) return;
 
-    activeObjects.forEach((obj: any) => {
-        obj.clone((cloned: any) => {
-            canvas.discardActiveObject();
-            cloned.set({
-                left: obj.left + 15,
-                top: obj.top + 15,
-                id: `id_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
-            });
-            if (cloned.type === 'activeSelection') {
-                cloned.canvas = canvas;
-                cloned.forEachObject((inner: any) => canvas.add(inner));
-                cloned.setCoords();
-            } else {
-                canvas.add(cloned);
-            }
-            canvas.setActiveObject(cloned);
-            canvas.requestRenderAll();
-            
-            const serialized = (cloned as any).toObject(['id', 'data', 'selectable', 'evented']);
-            setPages((prevPages) => {
-                const updated = prevPages.map((p) => {
-                  if (p.id !== currentPage) return p;
-                  return { ...p, elements: [...p.elements, serialized] };
-                });
-                saveToHistory(updated);
-                return updated;
-            });
+    const clonedObjects: any[] = [];
+    
+    for (const obj of activeObjects) {
+        // In Fabric v7.x, clone() returns a Promise.
+        const cloned = await obj.clone(['id', 'data', 'selectable', 'evented']);
+        canvas.discardActiveObject();
+        
+        cloned.set({
+            left: obj.left + 15,
+            top: obj.top + 15,
+            id: `id_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
         });
+
+        if (cloned.type === 'active-selection' || cloned.type === 'activeSelection') {
+            cloned.canvas = canvas;
+            (cloned as any).forEachObject((inner: any) => canvas.add(inner));
+            cloned.setCoords();
+        } else {
+            canvas.add(cloned);
+        }
+        clonedObjects.push(cloned);
+    }
+
+    if (clonedObjects.length > 1) {
+        const sel = new (fabric as any).ActiveSelection(clonedObjects, { canvas });
+        canvas.setActiveObject(sel);
+    } else if (clonedObjects.length === 1) {
+        canvas.setActiveObject(clonedObjects[0]);
+    }
+    
+    canvas.requestRenderAll();
+    
+    // Efficiently update state for all cloned objects at once
+    const serializedItems = clonedObjects.map(c => c.toObject(['id', 'data', 'selectable', 'evented']));
+    
+    setPages((prevPages) => {
+        const updated = prevPages.map((p) => {
+            if (p.id !== currentPage) return p;
+            return {
+                ...p,
+                elements: [...(p.elements || []), ...serializedItems]
+            };
+        });
+        saveToHistory(updated);
+        return updated;
     });
   };
 
